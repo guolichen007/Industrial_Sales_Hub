@@ -1,0 +1,48 @@
+# 单台云服务器部署：nginx(443) → api(gunicorn) → postgres（仅内网）
+# 用法：cd infra && cp ../.env.example ../.env && 编辑 ../.env && docker compose --env-file ../.env up -d --build
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      retries: 5
+
+  api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.backend
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    volumes:
+      - appdata:/data          # 报价 PDF、案例 PDF、附件（私有）
+    depends_on:
+      db: { condition: service_healthy }
+    networks: [internal]
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./nginx/site.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro   # 放入 fullchain.pem / privkey.pem
+    depends_on: [api]
+    networks: [internal]
+
+volumes:
+  pgdata:
+  appdata:
+
+networks:
+  internal:
