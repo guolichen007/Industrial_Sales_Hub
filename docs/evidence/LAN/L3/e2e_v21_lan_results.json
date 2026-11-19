@@ -266,12 +266,12 @@
    "detail": ""
   },
   {
-   "name": "普通 API P95 ≤ 1000ms（实测 171.4 ms）",
+   "name": "普通 API P95 ≤ 1000ms（实测 172.3 ms）",
    "pass": true,
    "detail": ""
   },
   {
-   "name": "PDF 生成/下载 P95 ≤ 5000ms（实测 222.5 ms）",
+   "name": "PDF 生成/下载 P95 ≤ 5000ms（实测 228.2 ms）",
    "pass": true,
    "detail": ""
   },
@@ -283,12 +283,12 @@
  ],
  "perf": {
   "api_requests": 216,
-  "api_p50_ms": 15.6,
-  "api_p95_ms": 171.4,
-  "api_max_ms": 198.9,
+  "api_p50_ms": 16.0,
+  "api_p95_ms": 172.3,
+  "api_max_ms": 197.2,
   "pdf_requests": 2,
-  "pdf_p95_ms": 222.5,
-  "pdf_max_ms": 222.5,
+  "pdf_p95_ms": 228.2,
+  "pdf_max_ms": 228.2,
   "http_5xx": 0
  },
  "js_errors": []

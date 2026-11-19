@@ -1,7 +1,8 @@
-Django==5.2.8
+Django==5.2.19
 djangorestframework==3.18.3
 psycopg[binary]==3.3.9
 reportlab==5.1.0
+pillow==13.0.0  # reportlab 依赖；固定为已修复 CVE 的版本
 openpyxl==3.1.5
 xlrd==2.0.2  # 仅用于只读分析真实 .xls 样张
 gunicorn==23.0.0  # 仅 CLOUD（Linux）

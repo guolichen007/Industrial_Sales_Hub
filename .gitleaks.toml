@@ -1,0 +1,7 @@
+# gitleaks 配置：沿用默认规则；仅放行测试代码中的合成口令（测试库专用，不对应任何真实账号）
+[extend]
+useDefault = true
+
+[allowlist]
+description = "测试 fixture 中的合成口令"
+paths = ['''backend/tests/.*\.py''', '''e2e/.*\.py''']
