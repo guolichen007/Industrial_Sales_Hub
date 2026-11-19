@@ -1,0 +1,9 @@
+{
+  "name": "工业销售管理系统",
+  "short_name": "销售管理",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f7fa",
+  "theme_color": "#10263b",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
