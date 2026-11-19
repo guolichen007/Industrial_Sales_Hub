@@ -1,7 +1,7 @@
-# Industrial Sales Hub · 工业销售管理系统 V2.0
+# Industrial Sales Hub · 工业销售管理系统 V2.1
 
 [![ci](https://github.com/guolichen007/Industrial_Sales_Hub/actions/workflows/ci.yml/badge.svg)](https://github.com/guolichen007/Industrial_Sales_Hub/actions/workflows/ci.yml)
-![Django 5.2 LTS](https://img.shields.io/badge/Django-5.2_LTS-0C4B33) ![PostgreSQL 16](https://img.shields.io/badge/PostgreSQL-16-336791) ![React 18](https://img.shields.io/badge/React-18-61DAFB) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6)
+![Django 5.2 LTS](https://img.shields.io/badge/Django-5.2_LTS-0C4B33) ![PostgreSQL 16](https://img.shields.io/badge/PostgreSQL-16-336791) ![React 18](https://img.shields.io/badge/React-18-61DAFB) ![LAN](https://img.shields.io/badge/部署-Windows_局域网-2b6cb0) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6)
 
 面向 1～5 人小型工业设备销售团队的轻量级业务系统：
 **客户与项目 → 商务报价（三公司固定模板）→ 合同/订单确认 → 项目执行进度 → 内部业绩 → 对外案例 PDF**。
