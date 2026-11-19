@@ -122,14 +122,17 @@ class ProjectSerializer(serializers.ModelSerializer):
         return data
 
     def validate_presale_phase(self, v):
-        if role_of(self.context["request"].user) == SALES and v in SALES_FORBIDDEN_PHASES and (not self.instance or self.instance.presale_phase != v):
-            raise serializers.ValidationError("“成交”由合同/订单确认自动产生，销售不能直接设置")
+        if role_of(self.context["request"].user) == SALES:
+            if v in SALES_FORBIDDEN_PHASES and (not self.instance or self.instance.presale_phase != v):
+                raise serializers.ValidationError("“成交”由合同/订单确认自动产生，销售不能直接设置")
+            if self.instance and self.instance.presale_phase == "成交" and v != "成交":
+                raise serializers.ValidationError("项目已成交（有合同/订单确认），销售不能改回其他阶段")
         return v
 
 
 class ProjectViewSet(viewsets.ModelViewSet):
     permission_classes = [HasCap.of("project.edit", read_cap="project.read")]
-    SUB_ACTIONS = {"updates", "milestones", "update_milestone", "related", "parties", "remove_party"}
+    SUB_ACTIONS = {"updates", "milestones", "update_milestone", "related", "parties", "remove_party", "set_execution_phase"}
 
     def get_permissions(self):
         if self.action in self.SUB_ACTIONS:
@@ -266,8 +269,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if stream == ProjectUpdate.PRESALE and phase:
             if phase not in PRESALE_PHASES:
                 raise serializers.ValidationError({"phase": "无效的售前阶段"})
-            if role_of(request.user) == SALES and phase in SALES_FORBIDDEN_PHASES:
-                raise PermissionDenied("“成交”由合同/订单确认自动产生")
+            if role_of(request.user) == SALES and (phase in SALES_FORBIDDEN_PHASES or project.presale_phase == "成交"):
+                raise PermissionDenied("“成交”由合同/订单确认自动产生；已成交项目的阶段由商务/负责人维护")
         upd = s.save(project=project, created_by=request.user)
         fields = ["updated_at"]
         if stream == ProjectUpdate.PRESALE and phase:
@@ -326,6 +329,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError({"phase": "只能设置为“暂停”或“执行中”"})
         if not project.milestones.exists():
             raise BusinessError("项目尚未进入执行阶段", code="no_execution")
+        if target == "执行中" and not project.orders.filter(status="CONFIRMED").exists():
+            raise BusinessError("项目已无有效的合同/订单确认，不能恢复执行；请先重新确认合同/订单。", code="no_order")
         project.execution_phase = target
         project.save(update_fields=["execution_phase", "updated_at"])
         if target == "执行中":

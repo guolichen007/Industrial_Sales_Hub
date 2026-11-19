@@ -79,6 +79,12 @@ def confirm_order(order_id: int, user) -> OrderConfirmation:
                 raise BusinessError("以合同/订单为依据时必须填写合同/订单号。", code="order_ref_required", http_status=400)
             if mode == "AND" and not can(user, "performance.approve"):
                 raise BusinessError("当前规则为“合同/订单 且 负责人确认”，需由负责人完成确认。", code="leader_required", http_status=403)
+        if order.quote_id:
+            from apps.quotations.models import Quote
+
+            q = Quote.objects.select_for_update().get(pk=order.quote_id)
+            if q.status == "CANCELLED":
+                raise BusinessError("关联报价已取消，不能确认。", code="quote_cancelled")
         if order.order_ref_norm and OrderConfirmation.objects.filter(legal_entity=order.legal_entity, order_ref_norm=order.order_ref_norm, status="CONFIRMED").exclude(pk=order.pk).exists():
             raise BusinessError(f"合同/订单号 {order.order_ref} 在该出具主体下已确认，禁止重复归集业绩。", code="duplicate_order")
         order.status = "CONFIRMED"
@@ -96,11 +102,14 @@ def confirm_order(order_id: int, user) -> OrderConfirmation:
             from apps.quotations.models import Quote
 
             q = Quote.objects.select_for_update().get(pk=order.quote_id)
-            if q.status in ("GENERATED", "SENT"):
+            if q.status in ("GENERATED", "SENT", "LOST"):
                 q.status = "ACCEPTED"
                 q.save(update_fields=["status", "updated_at"])
+        if project.execution_phase == "暂停":
+            project.execution_phase = "执行中"  # 撤销后重新确认：恢复执行
+            project.save(update_fields=["execution_phase", "updated_at"])
         init_milestones(project, user)
-        ProjectUpdate.objects.create(project=project, stream=ProjectUpdate.EXECUTION, title=f"合同/订单确认：{order.order_ref or '负责人确认'}",
+        ProjectUpdate.objects.create(project=project, stream=ProjectUpdate.EXECUTION, title=f"合同/订单已确认（{order.get_basis_display()}）",
                                      content=order.product_summary, happened_at=timezone.now(), created_by=user)
         return order
 
@@ -132,15 +141,15 @@ def revoke_order(order_id: int, user, reason: str) -> OrderConfirmation:
                 if project.milestones.exists():
                     project.execution_phase = "暂停"
                 project.save(update_fields=["presale_phase", "execution_phase", "updated_at"])
-                if order.quote_id:
-                    from apps.quotations.models import Quote
-
-                    q = Quote.objects.select_for_update().get(pk=order.quote_id)
-                    if q.status == "ACCEPTED" and not q.orders.filter(status="CONFIRMED").exists():
-                        q.status = "SENT"
-                        q.save(update_fields=["status", "updated_at"])
             else:
                 refresh_execution_phase(project)
-            ProjectUpdate.objects.create(project=project, stream=ProjectUpdate.EXECUTION, title=f"撤销合同/订单确认：{order.order_ref or '负责人确认'}",
-                                         content=f"原因：{order.revoke_reason}" + ("" if others else "；项目已无有效订单，执行暂停"), happened_at=timezone.now(), created_by=user)
+            if order.quote_id:
+                from apps.quotations.models import Quote
+
+                q = Quote.objects.select_for_update().get(pk=order.quote_id)
+                if q.status == "ACCEPTED" and not q.orders.filter(status="CONFIRMED").exists():
+                    q.status = "SENT"
+                    q.save(update_fields=["status", "updated_at"])
+            ProjectUpdate.objects.create(project=project, stream=ProjectUpdate.EXECUTION, title="撤销一笔合同/订单确认",
+                                         content="撤销原因已记录在合同/订单确认中" + ("" if others else "；项目已无有效订单，执行暂停"), happened_at=timezone.now(), created_by=user)
         return order

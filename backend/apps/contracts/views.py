@@ -144,6 +144,24 @@ class OrderViewSet(viewsets.ModelViewSet):
         audit(request, "confirm", "order", o.id, f"确认订单 {o.order_ref or '(负责人确认)'} 并生成业绩")
         return Response(self.get_serializer(o).data)
 
+    @action(detail=True, methods=["post"], url_path="amount")
+    def set_amount(self, request, pk=None):
+        """负责人/商务补录或更正合同金额（财务确认时不录金额，D5）；同步订单生成的业绩金额。"""
+        from apps.common.params import decimal_param
+        from apps.performances.models import Performance
+
+        if not can(request.user, "order.amount"):
+            raise PermissionDenied("仅负责人或商务可维护合同金额")
+        self.get_object()
+        o = OrderConfirmation.objects.select_for_update().get(pk=pk)
+        if o.status == "REVOKED":
+            raise BusinessError("已撤销的确认记录不能修改金额", code="revoked")
+        o.contract_amount = decimal_param(request.data.get("contract_amount"), "contract_amount", 16, 2, required=True)
+        o.save(update_fields=["contract_amount"])
+        Performance.objects.filter(order_confirmation=o, source="ORDER").exclude(status="REVOKED").update(internal_amount=o.contract_amount)
+        audit(request, "set_amount", "order", o.id, "更新合同金额")
+        return Response(self.get_serializer(o).data)
+
     @action(detail=True, methods=["post"])
     def revoke(self, request, pk=None):
         if not can(request.user, "order.revoke"):

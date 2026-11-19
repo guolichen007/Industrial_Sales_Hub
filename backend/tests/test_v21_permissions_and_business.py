@@ -519,3 +519,96 @@ def test_admin_dashboard_has_no_business_numbers(client_for, base, make_quote):
     make_quote()
     d = client_for("admin").get("/api/dashboard/").json()
     assert set(d) == {"role", "detail"}
+
+
+# ======================= 第二轮复审回归 =======================
+def test_quote_date_bounded(client_for, make_quote):
+    _, rid = make_quote(render=False)
+    r = client_for("assistant").patch(f"/api/quote-revisions/{rid}/", {"quote_date": "9999-12-31"}, format="json")
+    assert r.status_code == 400
+    assert client_for("assistant").get("/api/quotations/").status_code == 200
+
+
+def test_finance_can_pause_and_resume_only_with_order(client_for, base):
+    o = confirm(client_for, base, ref="PZ-1")
+    pid = base["p_sales"].id
+    f = client_for("finance")
+    assert f.post(f"/api/projects/{pid}/execution-phase/", {"phase": "暂停", "note": "等待现场"}, format="json").status_code == 200
+    assert f.post(f"/api/projects/{pid}/execution-phase/", {"phase": "执行中"}, format="json").status_code == 200
+    client_for("leader").post(f"/api/order-confirmations/{o['id']}/revoke/", {"reason": "作废"}, format="json")
+    assert Project.objects.get(pk=pid).execution_phase == "暂停"
+    r = f.post(f"/api/projects/{pid}/execution-phase/", {"phase": "执行中"}, format="json")
+    assert r.status_code == 409 and r.json()["code"] == "no_order"
+    confirm(client_for, base, ref="PZ-2")
+    assert Project.objects.get(pk=pid).execution_phase == "执行中"  # 重新确认后自动恢复
+
+
+def test_sales_cannot_move_won_project_back(client_for, base):
+    confirm(client_for, base, ref="WB-1")
+    pid = base["p_sales"].id
+    c = client_for("sales")
+    assert c.patch(f"/api/projects/{pid}/", {"presale_phase": "投标中"}, format="json").status_code == 400
+    assert c.post(f"/api/projects/{pid}/updates/", {"stream": "PRESALE", "title": "x", "phase": "投标中"}, format="json").status_code == 403
+    assert Project.objects.get(pk=pid).presale_phase == "成交"
+
+
+def test_cancelled_quote_cannot_be_edited_or_confirmed(client_for, base, make_quote):
+    qid, rid = make_quote()
+    c = client_for("assistant")
+    o = c.post("/api/order-confirmations/", {"project": base["p_sales"].id, "quote": qid, "basis": "CONTRACT", "order_ref": "CQ-1"}, format="json").json()
+    c.post(f"/api/quotations/{qid}/revisions/")
+    c.post(f"/api/quotations/{qid}/status/", {"status": "CANCELLED"}, format="json")
+    draft = c.get(f"/api/quotations/{qid}/").json()["latest"]["id"]
+    assert c.patch(f"/api/quote-revisions/{draft}/", {"remark": "x"}, format="json").json()["code"] == "cancelled"
+    r = client_for("leader").post(f"/api/order-confirmations/{o['id']}/confirm/")
+    assert r.status_code == 409 and r.json()["code"] == "quote_cancelled"
+
+
+def test_finance_confirm_then_leader_sets_amount_syncs_performance(client_for, base):
+    o = confirm(client_for, base, ref="AM-1", amount=None, who="finance")
+    assert client_for("finance").post(f"/api/order-confirmations/{o['id']}/amount/", {"contract_amount": "1"}, format="json").status_code == 403
+    r = client_for("assistant").post(f"/api/order-confirmations/{o['id']}/amount/", {"contract_amount": "123456.70"}, format="json")
+    assert r.status_code == 200 and r.json()["contract_amount"] == "123456.70"
+    assert str(Performance.objects.get(order_confirmation_id=o["id"]).internal_amount) == "123456.70"
+
+
+def test_admin_audit_hides_business_summaries(client_for, make_quote):
+    make_quote()
+    rows = client_for("admin").get("/api/audit-events/").json()["results"]
+    biz = [r for r in rows if r["resource"] in ("quote", "quote_revision", "project")]
+    assert biz and all("业务操作" in r["summary"] for r in biz)
+    lead = client_for("leader").get("/api/audit-events/").json()["results"]
+    assert any("QT-" in r["summary"] for r in lead)
+
+
+def test_legal_entity_bank_info_hidden_from_sales_finance(client_for, base):
+    from apps.organizations.models import LegalEntity
+
+    LegalEntity.objects.update(bank_account="6222 0000 1111", tax_no="9100X")
+    for role in ("sales", "finance"):
+        body = client_for(role).get("/api/legal-entities/").content.decode()
+        assert "6222" not in body and "9100X" not in body and "default_terms" not in body
+    assert "6222" in client_for("assistant").get("/api/legal-entities/").content.decode()
+
+
+def test_sales_cannot_delete_contact_and_order_attachments_hidden_from_finance(client_for, base):
+    from apps.organizations.models import Contact
+
+    cid = Contact.objects.first().id
+    assert client_for("sales").delete(f"/api/contacts/{cid}/").status_code == 403
+    o = confirm(client_for, base, ref="ATT-1")
+    r = client_for("finance").post("/api/attachments/", {"owner_type": "order", "owner_id": o["id"], "file": SimpleUploadedFile("合同.pdf", b"%PDF-1.4 x")}, format="multipart")
+    assert r.status_code == 201
+    assert client_for("finance").get(f"/api/attachments/{r.json()['id']}/download/").status_code == 403
+    assert client_for("leader").get(f"/api/attachments/{r.json()['id']}/download/").status_code == 200
+
+
+def test_superscript_owner_id_is_400(client_for, base):
+    assert client_for("sales").get("/api/attachments/?owner_type=project&owner_id=²").status_code == 400
+
+
+def test_sales_execution_log_has_no_order_ref(client_for, base):
+    confirm(client_for, base, ref="SECRET-LOG-9")
+    body = client_for("sales").get(f"/api/projects/{base['p_sales'].id}/updates/").content.decode()
+    assert "SECRET-LOG-9" not in body
+    assert "SECRET-LOG-9" not in client_for("sales").get("/api/dashboard/").content.decode()

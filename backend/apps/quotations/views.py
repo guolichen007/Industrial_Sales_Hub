@@ -74,6 +74,20 @@ class RevisionSerializer(serializers.ModelSerializer):
     def get_total_upper(self, obj):
         return rmb_upper(obj.total_gross)
 
+    def validate_quote_date(self, v):
+        import datetime
+
+        if not (datetime.date(2000, 1, 1) <= v <= datetime.date(2100, 12, 31)):
+            raise serializers.ValidationError("报价日期超出范围")
+        return v
+
+    def validate_ref_valid_until(self, v):
+        import datetime
+
+        if v and not (datetime.date(2000, 1, 1) <= v <= datetime.date(2100, 12, 31)):
+            raise serializers.ValidationError("日期超出范围")
+        return v
+
     def validate_valid_days(self, v):
         if not (1 <= v <= 365):
             raise serializers.ValidationError("有效期应在 1～365 天")
@@ -296,7 +310,13 @@ class RevisionViewSet(viewsets.GenericViewSet):
     @action(detail=True, methods=["post"])
     def render(self, request, pk=None):
         self.get_object()
-        rev = services.generate_revision(int(pk), request.user)
+        try:
+            rev = services.generate_revision(int(pk), request.user)
+        except services.PdfFailed as e:
+            audit(request, "generate_pdf_failed", "quote_revision", pk, f"报价 PDF 生成失败：{e.message[:120]}")
+            resp = Response({"code": "pdf_failed", "message": f"PDF 生成失败，草稿已保留，可修正后重试：{e.message}", "field_errors": {}, "request_id": getattr(request, "request_id", "")}, status=500)
+            resp._ish_commit = True  # 提交 last_error 与审计记录（草稿内容未改变）
+            return resp
         audit(request, "generate_pdf", "quote_revision", rev.id, f"生成报价 PDF {rev.code}", {"pdf_sha256": rev.pdf_sha256, "snapshot_sha256": rev.snapshot_sha256})
         return Response(RevisionSerializer(_fresh(rev.pk)).data)
 

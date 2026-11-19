@@ -16,9 +16,19 @@ class LegalEntitySerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
+class LegalEntityPublicSerializer(serializers.ModelSerializer):
+    """无报价/配置权限的角色只看到公司名称与模板标识（用于订单登记、案例署名下拉）。"""
+
+    class Meta:
+        model = LegalEntity
+        fields = ["id", "code", "name", "short_name", "template_key", "active"]
+
+
 class LegalEntityViewSet(viewsets.ModelViewSet):
     queryset = LegalEntity.objects.all()
-    serializer_class = LegalEntitySerializer
+
+    def get_serializer_class(self):
+        return LegalEntitySerializer if can(self.request.user, "legal_entity.write") else LegalEntityPublicSerializer
     permission_classes = [HasCap.of("legal_entity.write", read_cap="*")]
     http_method_names = ["get", "post", "patch"]
 
@@ -52,7 +62,10 @@ class AccountViewSet(viewsets.ModelViewSet):
     permission_classes = [HasCap.of("account.write", read_cap="account.read")]
 
     def get_queryset(self):
-        qs = Account.objects.prefetch_related("contacts").annotate(project_count=Count("project_parties__project", distinct=True))
+        from apps.projects.scope import visible_projects
+
+        vis = visible_projects(self.request.user)
+        qs = Account.objects.prefetch_related("contacts").annotate(project_count=Count("project_parties__project", filter=Q(project_parties__project__in=vis), distinct=True))
         p = self.request.query_params
         if q := p.get("q"):
             q = str_param(q, "q", 100)
@@ -120,3 +133,12 @@ class ContactViewSet(viewsets.ModelViewSet):
     def perform_create(self, s):
         c = s.save()
         audit(self.request, "create", "contact", c.id, f"新增联系人 {c.name}（{c.account.name}）")
+
+    def destroy(self, request, *a, **kw):
+        if not can(request.user, "account.delete"):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("仅部门负责人可删除联系人")
+        obj = self.get_object()
+        audit(request, "delete", "contact", obj.id, f"删除联系人 {obj.name}")
+        return super().destroy(request, *a, **kw)

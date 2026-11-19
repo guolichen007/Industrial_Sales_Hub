@@ -52,9 +52,11 @@ def lock_revision_for_edit(rev_id: int, expected_version=None) -> QuoteRevision:
     quote_id = QuoteRevision.objects.filter(pk=rev_id).values_list("quote_id", flat=True).first()
     if quote_id is None:
         raise BusinessError("报价版本不存在", code="not_found", http_status=404)
-    Quote.objects.select_for_update().get(pk=quote_id)
+    quote = Quote.objects.select_for_update().get(pk=quote_id)
     rev = QuoteRevision.objects.select_for_update(of=("self",)).select_related("quote__legal_entity").get(pk=rev_id)
     ensure_editable(rev)
+    if quote.status == "CANCELLED":
+        raise BusinessError("报价已取消，不能再修改或生成。", code="cancelled")
     if expected_version not in (None, "") and int(expected_version) != rev.lock_version:
         raise BusinessError("该草稿已被其他人修改，请刷新后再保存。", code="stale_version")
     return rev
@@ -70,10 +72,14 @@ def _s(v):
 
 
 def build_snapshot(rev: QuoteRevision) -> dict:
+    return build_snapshot_from(rev, QuoteLine.objects.filter(revision_id=rev.pk).order_by("sort", "id"))
+
+
+def build_snapshot_from(rev: QuoteRevision, line_objs) -> dict:
     q = rev.quote
     ent = q.legal_entity
     lines = []
-    for ln in QuoteLine.objects.filter(revision_id=rev.pk).order_by("sort", "id"):
+    for ln in line_objs:
         visible = set(ln.visible_param_keys or [])
         shown = [{"key": p.get("key"), "label": p.get("label"), "value": p.get("value"), "unit": p.get("unit", "")} for p in (ln.params or []) if p.get("key") in visible]
         lines.append({
@@ -109,56 +115,60 @@ def build_snapshot(rev: QuoteRevision) -> dict:
     }
 
 
-def _record_error(rev_id, message):
-    """在独立连接/事务中记录失败原因（主事务即将回滚）。"""
-    from django.db import connections
-
-    alias = "default"
-    conn = connections.create_connection(alias)
-    try:
-        with conn.cursor() as c:
-            c.execute(f"UPDATE {QuoteRevision._meta.db_table} SET last_error = %s WHERE id = %s", [message[:300], rev_id])
-        if not conn.get_autocommit():
-            conn.commit()
-    except Exception:  # noqa: BLE001 —— 记录失败原因不能影响主流程
-        pass
-    finally:
-        conn.close()
+class PdfFailed(Exception):
+    def __init__(self, rev_id, message):
+        super().__init__(message)
+        self.rev_id = rev_id
+        self.message = message
 
 
 def generate_revision(rev_id: int, user) -> QuoteRevision:
-    """生成 PDF 并冻结版本：至多成功一次；失败不留下半状态。"""
+    """生成 PDF 并冻结版本：至多成功一次；失败不留下半状态。
+
+    顺序：加锁 → 内存中重算并构建快照（不写库）→ 渲染 PDF → 成功后才写入行金额、快照、文件与状态。
+    渲染失败：只在同一事务里记录 last_error 并抛出 PdfFailed，由视图返回 500 并提交这条错误记录（草稿内容不变）。
+    （不能用第二个数据库连接去写同一行：该行已被本事务 FOR UPDATE 锁住，会无限等待。）
+    """
+    failed = None
     with transaction.atomic():
         rev = lock_revision_for_edit(rev_id)
         rev = QuoteRevision.objects.select_related("quote__legal_entity", "quote__recipient", "quote__project", "quote__recipient_contact", "created_by").get(pk=rev.pk)
-        if not QuoteLine.objects.filter(revision=rev).exists():
+        lines_mem = list(QuoteLine.objects.filter(revision_id=rev.pk).order_by("sort", "id"))
+        if not lines_mem:
             raise BusinessError("报价至少需要一行产品。", code="empty_quote")
-        recalc_revision(rev)
-        snap = build_snapshot(rev)
+        for ln in lines_mem:
+            recalc_line(ln, rev.price_basis)
+        rev.total_net, rev.total_tax, rev.total_gross = totals([{"line_net": l.line_net, "line_tax": l.line_tax} for l in lines_mem])
+        snap = build_snapshot_from(rev, lines_mem)
         try:
             pdf = render_quote_pdf(snap)
         except Exception as e:  # noqa: BLE001
-            _record_error(rev.pk, str(e))
-            raise BusinessError(f"PDF 生成失败，草稿已保留，可修正后重试：{e}", code="pdf_failed", http_status=500)
-        key = store_private("quotes", pdf)
-        rev.snapshot = snap
-        rev.snapshot_sha256 = sha256_bytes(canonical_json(snap))
-        rev.template_key = snap["template_key"]
-        rev.template_version = snap["template_version"]
-        rev.pdf_storage_key = key
-        rev.pdf_sha256 = sha256_bytes(pdf)
-        rev.pdf_size = len(pdf)
-        rev.status = QuoteRevision.GENERATED
-        rev.generated_by = user
-        rev.generated_at = timezone.now()
-        rev.last_error = ""
-        rev.lock_version += 1
-        rev.save()
-        q = rev.quote
-        if q.status == "DRAFT":
-            q.status = "GENERATED"
-            q.save(update_fields=["status", "updated_at"])
-        return rev
+            failed = str(e)[:300] or type(e).__name__
+            QuoteRevision.objects.filter(pk=rev.pk).update(last_error=failed)
+        if failed is None:
+            for ln in lines_mem:
+                ln.save(update_fields=["line_net", "line_tax", "line_gross"])
+            key = store_private("quotes", pdf)
+            rev.snapshot = snap
+            rev.snapshot_sha256 = sha256_bytes(canonical_json(snap))
+            rev.template_key = snap["template_key"]
+            rev.template_version = snap["template_version"]
+            rev.pdf_storage_key = key
+            rev.pdf_sha256 = sha256_bytes(pdf)
+            rev.pdf_size = len(pdf)
+            rev.status = QuoteRevision.GENERATED
+            rev.generated_by = user
+            rev.generated_at = timezone.now()
+            rev.last_error = ""
+            rev.lock_version += 1
+            rev.save()
+            q = rev.quote
+            if q.status == "DRAFT":
+                q.status = "GENERATED"
+                q.save(update_fields=["status", "updated_at"])
+    if failed is not None:
+        raise PdfFailed(rev_id, failed)
+    return rev
 
 
 def rerender_frozen(rev: QuoteRevision) -> bytes:

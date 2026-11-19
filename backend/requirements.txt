@@ -6,6 +6,7 @@ openpyxl==3.1.5
 xlrd==2.0.2  # 仅用于只读分析真实 .xls 样张
 gunicorn==23.0.0  # 仅 CLOUD（Linux）
 waitress==3.0.2  # Windows 局域网正式 WSGI 服务器
+tzdata==2025.2  # Windows 嵌入式 Python 无系统时区库
 # 测试
 pytest==9.2.0
 pytest-django==4.14.0

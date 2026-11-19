@@ -168,3 +168,25 @@ def test_concurrent_last_admin_demotion(users):
     ])
     status_codes(res)
     assert User.objects.filter(role="ADMIN", is_active=True).count() >= 1
+
+
+def test_pdf_failure_does_not_hang_and_records_error(users, make_quote, monkeypatch):
+    """复审 P0：PDF 渲染失败时不得挂起（旧实现用第二连接写被锁的行会无限等待）；草稿不变、last_error 已提交。"""
+    need_pg()
+    import time as _t
+
+    from apps.quotations import services
+
+    _, rid = make_quote(render=False)
+    before = QuoteRevision.objects.get(pk=rid)
+
+    def boom(snap):
+        raise RuntimeError("模拟字体缺失")
+
+    monkeypatch.setattr(services, "render_quote_pdf", boom)
+    t0 = _t.time()
+    r = client(users["assistant"]).post(f"/api/quote-revisions/{rid}/render/")
+    assert _t.time() - t0 < 10, "PDF 失败不应挂起"
+    assert r.status_code == 500 and r.json()["code"] == "pdf_failed"
+    after = QuoteRevision.objects.get(pk=rid)
+    assert after.status == "DRAFT" and after.last_error == "模拟字体缺失" and after.lock_version == before.lock_version and not after.pdf_storage_key

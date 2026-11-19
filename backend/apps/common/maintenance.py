@@ -28,12 +28,24 @@ class WriteTransactionMiddleware:
 
         if request.method in self.SAFE or not request.path.startswith("/api/") or request.path.startswith(self.EXEMPT):
             return self.get_response(request)
-        with transaction.atomic():
-            if connection.vendor == "postgresql":
-                with connection.cursor() as c:
-                    c.execute("SET LOCAL lock_timeout = '20s'")
-                    c.execute("SELECT pg_advisory_xact_lock_shared(%s)", [settings.ADVISORY_LOCK_KEY])
-            response = self.get_response(request)
-            if response.status_code >= 400 and not getattr(response, "_ish_commit", False):
-                transaction.set_rollback(True)
+        from django.db import OperationalError
+        from django.http import JsonResponse
+
+        try:
+            with transaction.atomic():
+                if connection.vendor == "postgresql":
+                    with connection.cursor() as c:
+                        c.execute("SET LOCAL lock_timeout = '20s'")
+                        c.execute("SELECT pg_advisory_xact_lock_shared(%s)", [settings.ADVISORY_LOCK_KEY])
+                response = self.get_response(request)
+                if response.status_code >= 400 and not getattr(response, "_ish_commit", False):
+                    transaction.set_rollback(True)
+        except OperationalError as e:
+            if "lock" not in str(e).lower():
+                raise
+            # 备份/升级正持有排他锁：返回与维护模式一致的 JSON 503，而不是 HTML 500
+            resp = JsonResponse({"code": "maintenance", "message": "系统正在备份或维护，暂时只读，请稍后重试。", "field_errors": {}, "request_id": getattr(request, "request_id", "")},
+                                status=503, json_dumps_params={"ensure_ascii": False})
+            resp["Retry-After"] = "60"
+            return resp
         return response

@@ -12,6 +12,7 @@ from rest_framework.views import APIView
 from apps.audit.service import audit
 from apps.common.errors import BusinessError
 from apps.common.pdfkit import read_private, store_private
+from apps.common.params import int_param
 from apps.common.roles import can
 
 from .models import Attachment
@@ -62,7 +63,8 @@ def _owner_access(user, owner_type, owner_id, write=False):
         o = OrderConfirmation.objects.get(pk=owner_id)
         if not visible_projects(user).filter(pk=o.project_id).exists():
             return False
-        return can(user, "order.confirm" if write else "order.access")
+        # 合同/订单扫描件可能含金额（D5）：财务可上传确认依据，但查看/下载限负责人与商务
+        return can(user, "order.confirm") if write else can(user, "order.amount")
     if owner_type == "performance":
         return can(user, "performance.write")
     return False
@@ -78,13 +80,15 @@ class AttachmentSerializer(serializers.ModelSerializer):
 
 class AttachmentListView(APIView):
     def get(self, request):
-        ot, oid = request.query_params.get("owner_type"), request.query_params.get("owner_id", "")
-        if not (ot and oid.isdigit()) or not _owner_access(request.user, ot, int(oid)):
+        ot = request.query_params.get("owner_type")
+        oid = int_param(request.query_params.get("owner_id"), "owner_id", required=True)
+        if not ot or not _owner_access(request.user, ot, oid):
             raise PermissionDenied("无权查看该附件列表")
         return Response(AttachmentSerializer(Attachment.objects.filter(owner_type=ot, owner_id=oid), many=True).data)
 
     def post(self, request):
-        ot, oid = str(request.data.get("owner_type", "")), str(request.data.get("owner_id", ""))
+        ot = str(request.data.get("owner_type", ""))
+        oid = str(int_param(request.data.get("owner_id"), "owner_id", required=True))
         f = request.FILES.get("file")
         if not f:
             raise BusinessError("请选择文件", code="no_file", http_status=400)
