@@ -79,6 +79,7 @@ class ExecutionMilestone(models.Model):
     planned_date = models.DateField("预计完成", null=True, blank=True)
     actual_date = models.DateField("实际完成", null=True, blank=True)
     note = models.CharField("说明", max_length=300, blank=True)
+    delay_reason = models.CharField("延期原因", max_length=200, blank=True)
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
     updated_at = models.DateTimeField(auto_now=True)
 

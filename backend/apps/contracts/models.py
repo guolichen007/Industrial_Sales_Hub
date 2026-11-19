@@ -3,6 +3,13 @@ from django.db import models
 from django.db.models import Q
 
 
+def normalize_order_ref(ref: str) -> str:
+    import unicodedata
+
+    s = unicodedata.normalize("NFKC", ref or "")
+    return "".join(s.split()).upper()
+
+
 class OrderConfirmation(models.Model):
     """合同/订单确认记录：业绩归集的唯一受控入口。DRAFT → CONFIRMED → REVOKED"""
 
@@ -11,10 +18,13 @@ class OrderConfirmation(models.Model):
 
     project = models.ForeignKey("projects.Project", on_delete=models.PROTECT, related_name="orders")
     quote = models.ForeignKey("quotations.Quote", null=True, blank=True, on_delete=models.PROTECT, related_name="orders")
+    quote_revision = models.ForeignKey("quotations.QuoteRevision", null=True, blank=True, on_delete=models.PROTECT, related_name="orders")  # 绑定已冻结版本
     legal_entity = models.ForeignKey("organizations.LegalEntity", on_delete=models.PROTECT, related_name="orders")
     customer = models.ForeignKey("organizations.Account", null=True, blank=True, on_delete=models.PROTECT, related_name="orders")
     basis = models.CharField("确认依据", max_length=10, choices=BASIS)
     order_ref = models.CharField("合同/订单号", max_length=60, blank=True)
+    order_ref_norm = models.CharField(max_length=60, blank=True, editable=False, db_index=True)  # 去空白/全半角/大小写后的唯一键
+    idempotency_fingerprint = models.CharField(max_length=64, blank=True, editable=False)
     signed_on = models.DateField("签订日期", null=True, blank=True)
     contract_amount = models.DecimalField("合同金额(含税)", max_digits=16, decimal_places=2, null=True, blank=True)
     product_summary = models.CharField("供货产品", max_length=200, blank=True)
@@ -34,8 +44,13 @@ class OrderConfirmation(models.Model):
         constraints = [
             # 同一出具主体下，未撤销的合同/订单号不得重复
             models.UniqueConstraint(
-                fields=["legal_entity", "order_ref"],
-                condition=Q(~Q(status="REVOKED") & ~Q(order_ref="")),
-                name="uniq_active_order_ref",
+                fields=["legal_entity", "order_ref_norm"],
+                condition=Q(~Q(status="REVOKED") & ~Q(order_ref_norm="")),
+                name="uniq_active_order_ref_norm",
             )
         ]
+
+    def save(self, *a, **kw):
+        self.order_ref = (self.order_ref or "").strip()
+        self.order_ref_norm = normalize_order_ref(self.order_ref)
+        super().save(*a, **kw)

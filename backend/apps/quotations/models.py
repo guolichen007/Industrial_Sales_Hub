@@ -43,6 +43,13 @@ class QuoteRevision(models.Model):
     terms = models.TextField("商务条款", blank=True)
     remark = models.TextField("备注", blank=True)
     show_upper_amount = models.BooleanField("显示大写金额", default=True)
+    # 参考价（铜价/汇率等）：仅手工录入并印在报价单上，不参与自动调价（D4）
+    ref_copper_price = models.CharField("参考铜价", max_length=60, blank=True)
+    ref_exchange_rate = models.CharField("参考汇率", max_length=60, blank=True)
+    ref_valid_until = models.DateField("参考价有效期至", null=True, blank=True)
+    ref_note = models.CharField("参考价说明", max_length=200, blank=True)
+    price_basis = models.CharField(max_length=8, default="NET")  # 创建时取自出具主体，生成时冻结
+    lock_version = models.PositiveIntegerField(default=0)  # 草稿乐观并发版本号
     total_net = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0"))
     total_tax = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0"))
     total_gross = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0"))
@@ -83,6 +90,7 @@ class QuoteLine(models.Model):
     visible_param_keys = models.JSONField(default=list, blank=True)
     unit = models.CharField(max_length=10, default="台")
     qty = models.DecimalField(max_digits=14, decimal_places=3)
+    multiplier = models.DecimalField("乘数", max_digits=12, decimal_places=3, default=Decimal("1"))  # 原样中明确的倍数（如每台米数）
     unit_price = models.DecimalField(max_digits=14, decimal_places=2)
     tax_rate = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal("0.13"))
     discount_rate = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal("0"))

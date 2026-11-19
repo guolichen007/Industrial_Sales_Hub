@@ -34,7 +34,14 @@ def _cell(v):
 
 def read_rows(kind, data: bytes):
     # data_only=True：只读缓存值，不计算公式；read_only 模式下不加载 VBA
-    wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    import zipfile
+
+    try:
+        wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    except (zipfile.BadZipFile, KeyError, OSError, ValueError, TypeError) as e:
+        raise ValueError(f"无法读取该 xlsx 文件（文件损坏或不是标准 Excel）：{type(e).__name__}")
+    if not wb.worksheets:
+        raise ValueError("工作簿中没有工作表")
     ws = wb.worksheets[0]
     it = ws.iter_rows(values_only=True)
     header = [_cell(x) for x in next(it, [])]
@@ -53,14 +60,18 @@ def read_rows(kind, data: bytes):
     return rows
 
 
-def _dec(s, field, errs, default=None):
+def _dec(s, field, errs, default=None, max_value=Decimal("999999999999.99")):
     if s == "":
         return default
     try:
-        return Decimal(s.replace(",", ""))
+        d = Decimal(s.replace(",", "").replace("，", ""))
     except InvalidOperation:
         errs.append(f"{field} 不是有效数字")
         return default
+    if not d.is_finite() or d < 0 or d > max_value:
+        errs.append(f"{field} 数值无效或超出范围")
+        return default
+    return d
 
 
 def validate(kind, rows):
@@ -78,15 +89,22 @@ def validate(kind, rows):
             for f, x in [("型号编码", sku), ("型号", model), ("名称", name), ("类别", cat)]:
                 if not x:
                     errs.append(f"{f} 必填")
-            tax = _dec(v[6], "税率", errs, Decimal("0.13"))
+            tax = _dec(v[6], "税率", errs, Decimal("0.13"), max_value=Decimal("100"))
             if tax is not None and tax >= 1:
                 tax = tax / 100  # 允许填写 13 表示 13%
+            if tax is not None and tax >= 1:
+                errs.append("税率 超出范围")
             _dec(v[7], "参考未税单价", errs, Decimal("0"))
+            for i, lim in ((0, 60), (1, 80), (2, 100), (3, 40), (4, 40), (5, 10)):
+                if len(v[i]) > lim:
+                    errs.append(f"第 {i + 1} 列超过 {lim} 字")
             key = sku.lower()
             dup = Product.objects.filter(sku__iexact=sku).exists() if sku else False
         elif kind == "accounts":
             if not v[0]:
                 errs.append("客户名称 必填")
+            if len(v[0]) > 150:
+                errs.append("客户名称 超过 150 字")
             key = normalize_name(v[0])
             dup = Account.objects.filter(normalized_name=key).exists() if key else False
         else:
@@ -95,6 +113,8 @@ def validate(kind, rows):
             if not v[1].isdigit() or not (1990 <= int(v[1] or 0) <= 2100):
                 errs.append("年份 应为四位数字")
             _dec(v[9], "内部金额", errs)
+            if len(v[0]) > 150:
+                errs.append("业绩名称 超过 150 字")
             key = "|".join([v[0], v[1], v[11]]).lower()
             dup = Performance.objects.filter(import_key=hashlib.sha1(key.encode()).hexdigest()).exists()
         if key and key in seen:

@@ -25,6 +25,12 @@ class LegalEntity(models.Model):
     name = models.CharField("公司全称", max_length=120)
     short_name = models.CharField("简称", max_length=40)
     template_key = models.CharField("报价模板", max_length=20, choices=[("A", "模板A·蓝色抬头"), ("B", "模板B·绿色抬头"), ("C", "模板C·灰色简洁")])
+    # V2.1：每家公司独立的计价口径与模板文字（依据真实样张配置；未签收前为工程默认值）
+    price_basis = models.CharField("单价口径", max_length=8, choices=[("NET", "未税单价，逐行计税"), ("GROSS", "含税单价，倒算税额")], default="NET")
+    quote_title = models.CharField("报价单标题", max_length=40, default="报　价　单")
+    intro_text = models.CharField("开头语", max_length=200, default="感谢贵司的信任与支持，现将相关产品报价如下：")
+    show_tax_columns = models.BooleanField("显示税率/税额列", default=True)
+    template_verified = models.BooleanField("模板已按真实样张签收", default=False)
     address = models.CharField("地址", max_length=200, blank=True)
     phone = models.CharField("电话", max_length=60, blank=True)
     fax = models.CharField("传真", max_length=60, blank=True)

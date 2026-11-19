@@ -29,14 +29,22 @@ def round2(v) -> Decimal:
     return D(v).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
-def line_amounts(qty, unit_price, tax_rate, discount_rate=0):
+def line_amounts(qty, unit_price, tax_rate, discount_rate=0, price_basis="NET"):
+    """price_basis=NET：单价未税，逐行计税；GROSS：单价含税，金额倒算未税与税额（税额 = 含税 − 未税）。"""
     qty, unit_price, tax_rate, discount_rate = D(qty), D(unit_price), D(tax_rate), D(discount_rate)
+    for v in (qty, unit_price, tax_rate, discount_rate):
+        if not v.is_finite():
+            raise ValueError("数值无效")
     if qty < 0 or unit_price < 0:
         raise ValueError("数量和单价不能为负数")
     if not (Decimal(0) <= tax_rate < Decimal(1)):
         raise ValueError("税率应在 0～1 之间，例如 0.13")
     if not (Decimal(0) <= discount_rate < Decimal(1)):
         raise ValueError("折扣率应在 0～1 之间，例如 0.05 表示优惠 5%")
+    if price_basis == "GROSS":
+        gross = round2(qty * unit_price * (Decimal(1) - discount_rate))
+        net = round2(gross / (Decimal(1) + tax_rate))
+        return net, gross - net, gross
     net = round2(qty * unit_price * (Decimal(1) - discount_rate))
     tax = round2(net * tax_rate)
     return net, tax, net + tax

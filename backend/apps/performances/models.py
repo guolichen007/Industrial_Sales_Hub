@@ -50,6 +50,9 @@ class CaseRelease(models.Model):
     pdf_sha256 = models.CharField(max_length=64, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
+    withdrawn = models.BooleanField("已撤回", default=False)
+    withdrawn_reason = models.CharField(max_length=200, blank=True)
+    withdrawn_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-id"]

@@ -10,7 +10,9 @@ from rest_framework.views import APIView
 from apps.audit.service import audit
 from apps.common.errors import BusinessError
 from apps.common.pdfkit import canonical_json, read_private, sha256_bytes, store_private
-from apps.common.roles import SALES, HasCap, can, role_of, sales_scoped
+from apps.common.params import int_list, int_param, str_param
+from apps.common.roles import SALES, HasCap, can, role_of
+from apps.projects.scope import performances_for
 from apps.organizations.models import LegalEntity
 
 from .models import CaseRelease, Performance
@@ -34,10 +36,10 @@ class PerformanceSerializer(serializers.ModelSerializer):
 
 
 class PerformanceSafeSerializer(PerformanceSerializer):
-    """销售视图：不含 internal_amount / remark。"""
+    """安全视图（销售、财务）：不含内部金额、内部备注、合同编号（D2/D5）。"""
 
     class Meta(PerformanceSerializer.Meta):
-        fields = [f for f in PerformanceSerializer.Meta.fields if f not in ("internal_amount", "remark")]
+        fields = [f for f in PerformanceSerializer.Meta.fields if f not in ("internal_amount", "remark", "order_ref", "order_confirmation")]
 
 
 def performance_payload(p, user):
@@ -45,23 +47,23 @@ def performance_payload(p, user):
 
 
 class PerformanceViewSet(viewsets.ModelViewSet):
-    permission_classes = [HasCap.of("performance.write", read_cap="*")]
+    permission_classes = [HasCap.of("performance.write", read_cap="performance.read")]
     http_method_names = ["get", "post", "patch"]
 
     def get_serializer_class(self):
         return PerformanceSerializer if can(self.request.user, "performance.see_amount") else PerformanceSafeSerializer
 
     def get_queryset(self):
-        u = self.request.user
-        qs = Performance.objects.select_related("project", "sales_owner", "order_confirmation")
-        if sales_scoped(u):
-            qs = qs.filter(Q(sales_owner=u) | Q(project__sales_owner=u) | Q(project__members=u)).distinct()
+        qs = performances_for(self.request.user).select_related("project", "sales_owner", "order_confirmation")
         p = self.request.query_params
         if q := p.get("q"):
+            q = str_param(q, "q", 100)
             qs = qs.filter(Q(title__icontains=q) | Q(product_summary__icontains=q) | Q(region__icontains=q) | Q(host_maker__icontains=q) | Q(owner_org__icontains=q) | Q(investor__icontains=q))
-        for f in ("status", "year", "source", "industry", "machine_type"):
+        if (y := int_param(p.get("year"), "year")) is not None:
+            qs = qs.filter(year=y)
+        for f in ("status", "source", "industry", "machine_type"):
             if v := p.get(f):
-                qs = qs.filter(**{f: v})
+                qs = qs.filter(**{f: str_param(v, f, 40)})
         if p.get("publishable") == "1":
             qs = qs.filter(publishable=True, status="CONFIRMED")
         return qs
@@ -72,16 +74,21 @@ class PerformanceViewSet(viewsets.ModelViewSet):
         audit(self.request, "create", "performance", o.id, f"手工补录业绩 {o.title}（待核实）")
 
     def perform_update(self, s):
-        if s.instance.status == "REVOKED":
+        inst = Performance.objects.select_for_update().get(pk=s.instance.pk)
+        if inst.status == "REVOKED":
             raise BusinessError("已撤销业绩不可修改", code="revoked")
+        if inst.source == "ORDER" and "internal_amount" in s.validated_data and s.validated_data["internal_amount"] != inst.internal_amount:
+            raise BusinessError("订单生成的业绩金额以合同/订单为准，不能在业绩台账单独修改。", code="order_amount_locked")
+        s.instance = inst
         o = s.save()
         audit(self.request, "update", "performance", o.id, f"修改业绩 {o.title}")
 
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
         if not can(request.user, "performance.approve"):
-            raise PermissionDenied("仅部门负责人/管理员可确认业绩")
-        o = self.get_object()
+            raise PermissionDenied("仅部门负责人可确认业绩")
+        self.get_object()
+        o = Performance.objects.select_for_update().get(pk=pk)
         if o.status != "PENDING":
             return Response(self.get_serializer(o).data)
         o.status, o.confirmed_by, o.confirmed_at = "CONFIRMED", request.user, timezone.now()
@@ -92,11 +99,16 @@ class PerformanceViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def revoke(self, request, pk=None):
         if not can(request.user, "performance.approve"):
-            raise PermissionDenied("仅部门负责人/管理员可撤销业绩")
-        o = self.get_object()
-        reason = str(request.data.get("reason", "")).strip()
+            raise PermissionDenied("仅部门负责人可撤销业绩")
+        self.get_object()
+        o = Performance.objects.select_for_update().get(pk=pk)
+        reason = str_param(request.data.get("reason"), "reason", 200)
         if not reason:
             raise BusinessError("请填写撤销原因", code="reason_required", http_status=400)
+        if o.source == "ORDER" and o.order_confirmation and o.order_confirmation.status == "CONFIRMED":
+            raise BusinessError("该业绩来自合同/订单确认，请在“合同/订单确认”中撤销，以保持订单与业绩一致。", code="revoke_via_order")
+        if o.status == "REVOKED":
+            return Response(self.get_serializer(o).data)
         o.status = "REVOKED"
         o.remark = (o.remark + f"\n[撤销 {timezone.localdate()}] {reason}").strip()
         o.save()
@@ -123,7 +135,7 @@ class CaseReleaseSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CaseRelease
-        fields = ["id", "title", "subtitle", "legal_entity", "performance_ids", "public_snapshot", "snapshot_sha256", "pdf_sha256", "created_by_name", "created_at"]
+        fields = ["id", "title", "subtitle", "legal_entity", "performance_ids", "public_snapshot", "snapshot_sha256", "pdf_sha256", "created_by_name", "created_at", "withdrawn", "withdrawn_reason", "withdrawn_at"]
         read_only_fields = ["public_snapshot", "snapshot_sha256", "pdf_sha256"]
 
 
@@ -131,45 +143,89 @@ def build_case_snapshot(perfs, title, subtitle, entity):
     return {"schema": 1, "title": title, "subtitle": subtitle, "issuer": entity.name if entity else "", "cases": [public_case(p) for p in perfs]}
 
 
-class CasePreviewView(APIView):
-    """案例预览：只返回白名单字段。"""
+def _publishable(ids):
+    perfs = {p.id: p for p in Performance.objects.filter(pk__in=ids)}
+    bad = [i for i in ids if i not in perfs or perfs[i].status != "CONFIRMED" or not perfs[i].publishable]
+    if bad:
+        raise BusinessError(f"以下业绩未确认或未标记“允许对外展示”，不能发布：{bad}", code="not_publishable", http_status=400)
+    return [perfs[i] for i in ids]
 
-    permission_classes = [HasCap.of("case.write", read_cap="case.read")]
+
+class CasePreviewView(APIView):
+    """案例预览：只返回白名单字段；仅“已确认 + 允许对外展示”的业绩（共享资料）。"""
+
+    permission_classes = [HasCap.of("case.generate", read_cap="case.read")]
 
     def post(self, request):
-        ids = request.data.get("performance_ids") or []
-        perfs = list(Performance.objects.filter(pk__in=ids, status="CONFIRMED", publishable=True))
-        return Response({"cases": [public_case(p) for p in sorted(perfs, key=lambda x: ids.index(x.id))]})
+        ids = int_list(request.data.get("performance_ids") or [], "performance_ids")[:200]
+        perfs = {p.id: p for p in Performance.objects.filter(pk__in=ids, status="CONFIRMED", publishable=True)}
+        return Response({"cases": [public_case(perfs[i]) for i in ids if i in perfs]})
 
+
+class PublicCaseListView(APIView):
+    """可公开案例候选（白名单字段）：销售也可浏览与检索，不暴露内部业绩字段。"""
+
+    permission_classes = [HasCap.of("case.generate", read_cap="case.read")]
+
+    def get(self, request):
+        qs = Performance.objects.filter(status="CONFIRMED", publishable=True).order_by("-year", "-id")
+        if q := request.query_params.get("q"):
+            q = str_param(q, "q", 100)
+            qs = qs.filter(Q(title__icontains=q) | Q(product_summary__icontains=q) | Q(region__icontains=q) | Q(industry__icontains=q) | Q(machine_type__icontains=q))
+        if (y := int_param(request.query_params.get("year"), "year")) is not None:
+            qs = qs.filter(year=y)
+        return Response([{"id": p.id, **public_case(p)} for p in qs[:500]])
 
 
 class CaseReleaseViewSet(viewsets.ModelViewSet):
     serializer_class = CaseReleaseSerializer
-    permission_classes = [HasCap.of("case.write", read_cap="case.read")]
+    permission_classes = [HasCap.of("case.generate", read_cap="case.read")]
     http_method_names = ["get", "post"]
-    queryset = CaseRelease.objects.select_related("created_by")
+
+    def get_queryset(self):
+        qs = CaseRelease.objects.select_related("created_by")
+        if role_of(self.request.user) == SALES:
+            qs = qs.filter(withdrawn=False)
+        return qs
 
     def create(self, request, *a, **kw):
-        ids = [int(x) for x in (request.data.get("performance_ids") or [])]
+        ids = int_list(request.data.get("performance_ids") or [], "performance_ids")
         if not ids:
             raise BusinessError("请至少选择一条业绩", code="empty_case", http_status=400)
-        perfs = {p.id: p for p in Performance.objects.filter(pk__in=ids)}
-        bad = [i for i in ids if i not in perfs or perfs[i].status != "CONFIRMED" or not perfs[i].publishable]
-        if bad:
-            raise BusinessError(f"以下业绩未确认或未标记“允许对外展示”，不能发布：{bad}", code="not_publishable", http_status=400)
-        title = str(request.data.get("title") or "项目业绩案例").strip()[:120]
-        subtitle = str(request.data.get("subtitle") or "").strip()[:200]
-        entity = LegalEntity.objects.filter(pk=request.data.get("legal_entity")).first() if request.data.get("legal_entity") else None
-        snap = build_case_snapshot([perfs[i] for i in ids], title, subtitle, entity)
+        if len(ids) > 200:
+            raise BusinessError("单册最多 200 条案例", code="too_many", http_status=400)
+        perfs = _publishable(ids)
+        title = str_param(request.data.get("title"), "title", 120) or "项目业绩案例"
+        subtitle = str_param(request.data.get("subtitle"), "subtitle", 200)
+        eid = int_param(request.data.get("legal_entity"), "legal_entity")
+        entity = LegalEntity.objects.filter(pk=eid).first() if eid else None
+        if eid and not entity:
+            raise BusinessError("署名公司不存在", code="not_found", http_status=400)
+        snap = build_case_snapshot(perfs, title, subtitle, entity)
         pdf = render_case_pdf(snap)
         cr = CaseRelease.objects.create(title=title, subtitle=subtitle, legal_entity=entity, performance_ids=ids, public_snapshot=snap,
                                         snapshot_sha256=sha256_bytes(canonical_json(snap)), pdf_storage_key=store_private("cases", pdf), pdf_sha256=sha256_bytes(pdf), created_by=request.user)
         audit(request, "publish", "case_release", cr.id, f"生成案例册《{title}》（{len(ids)} 条）", {"pdf_sha256": cr.pdf_sha256})
         return Response(CaseReleaseSerializer(cr).data, status=201)
 
+    @action(detail=True, methods=["post"])
+    def withdraw(self, request, pk=None):
+        """撤回案例册：之后不可再下载；已经发出的文件无法追回（前端明示）。"""
+        if not can(request.user, "case.withdraw"):
+            raise PermissionDenied("仅部门负责人可撤回案例册")
+        self.get_object()
+        cr = CaseRelease.objects.select_for_update().get(pk=pk)
+        reason = str_param(request.data.get("reason"), "reason", 200, required=True)
+        cr.withdrawn, cr.withdrawn_reason, cr.withdrawn_at = True, reason, timezone.now()
+        cr.save(update_fields=["withdrawn", "withdrawn_reason", "withdrawn_at"])
+        audit(request, "withdraw", "case_release", cr.id, f"撤回案例册：{reason}")
+        return Response(CaseReleaseSerializer(cr).data)
+
     @action(detail=True, methods=["get"])
     def pdf(self, request, pk=None):
         cr = self.get_object()
+        if cr.withdrawn:
+            raise BusinessError("该案例册已撤回，不能再下载。", code="withdrawn", http_status=410)
         data = read_private(cr.pdf_storage_key)
         if sha256_bytes(data) != cr.pdf_sha256:
             raise BusinessError("文件校验失败", code="pdf_integrity", http_status=500)
