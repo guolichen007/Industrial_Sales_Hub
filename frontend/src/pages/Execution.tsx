@@ -81,6 +81,17 @@ export default function Execution() {
       fail(e);
     }
   };
+  const setAmount = async (o: any) => {
+    const v = prompt(`合同 ${o.order_ref || "（负责人确认）"} 的含税金额`, o.contract_amount || "");
+    if (v === null || v === "") return;
+    try {
+      await post(`/order-confirmations/${o.id}/amount/`, { contract_amount: v });
+      notify("合同金额已更新，订单业绩金额已同步");
+      reloadOrders();
+    } catch (e) {
+      fail(e);
+    }
+  };
   const revoke = async (o: any) => {
     const reason = prompt("撤销原因（必填，将保留记录）");
     if (!reason) return;
@@ -117,6 +128,7 @@ export default function Execution() {
                     <td><Chip s={o.status_label} /></td><td className="micro">{o.confirmed_by_name}{o.revoke_reason && <div>撤销：{o.revoke_reason}</div>}</td>
                     <td className="rowactions">
                       {o.status === "DRAFT" && can("order.confirm") && <button className="btn mini primary" onClick={() => confirm_(o)}>确认</button>}
+                      {o.status !== "REVOKED" && can("order.amount") && <button className="btn mini" onClick={() => setAmount(o)}>{o.contract_amount ? "改金额" : "补录金额"}</button>}
                       {o.status === "CONFIRMED" && can("order.revoke") && <button className="btn mini warn" onClick={() => revoke(o)}>撤销</button>}
                     </td>
                   </tr>
