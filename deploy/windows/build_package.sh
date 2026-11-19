@@ -133,8 +133,12 @@ done_ py; fi
 
 if ! has pg; then
 echo "== PostgreSQL（裁剪 pgAdmin/StackBuilder/文档/头文件）"
-unzip -q "$CACHE/postgresql-$PG_VER-windows-x64-binaries.zip" -d "$STAGE/runtime" \
-  -x "pgsql/pgAdmin/*" "pgsql/StackBuilder/*" "pgsql/doc/*" "pgsql/include/*" "pgsql/symbols/*" "pgsql/bin/wx*" "pgsql/bin/stackbuilder*"
+rm -rf "$STAGE/runtime/pgsql"
+# 只保留服务端与命令行工具运行所需文件：去掉 pgAdmin（目录名含空格 "pgAdmin 4"）、StackBuilder、文档、头文件、.lib/.pdb
+unzip -Z1 "$CACHE/postgresql-$PG_VER-windows-x64-binaries.zip" \
+  | grep -v -E '^pgsql/(pgAdmin|StackBuilder|doc|include|symbols)|^pgsql/bin/(wx|stackbuilder)|\.(lib|pdb)$|/$' > "$OUT/pg-files.txt"
+if grep -q -i pgadmin "$OUT/pg-files.txt"; then echo "pgAdmin 未被排除" >&2; exit 6; fi
+( cd "$STAGE/runtime" && tr '\n' '\0' < "$OUT/pg-files.txt" | xargs -0 -n 2000 unzip -q -o "$CACHE/postgresql-$PG_VER-windows-x64-binaries.zip" )
 mkdir -p "$STAGE/runtime/winsw"
 cp "$CACHE/WinSW-x64.exe" "$STAGE/runtime/winsw/"
 cp "$CACHE/vc_redist.x64.exe" "$STAGE/runtime/"
