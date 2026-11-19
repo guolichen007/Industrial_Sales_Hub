@@ -6,72 +6,50 @@
 面向 1～5 人小型工业设备销售团队的轻量级业务系统：
 **客户与项目 → 商务报价（三公司固定模板）→ 合同/订单确认 → 项目执行进度 → 内部业绩 → 对外案例 PDF**。
 
-依据：设计包（PRD、交互原型、开发任务书、二轮确认表），已归档在 [`docs/design/`](docs/design/)。
+> **当前版本 2.1.0-rc1（局域网交付候选，试用版）**：首期部署方式为**一台 Windows 主机集中安装、局域网内其他电脑用浏览器访问**，
+> 数据库为本机 PostgreSQL，不上云、不需要公网域名。
+> 门禁状态见 [`docs/evidence/LAN/README.md`](docs/evidence/LAN/README.md)；**三份真实报价样张签收、Windows 现场安装与双机 UAT 仍为 BLOCKED**，
+> 见 [`docs/剩余问题.md`](docs/剩余问题.md)。在这些完成前不发布正式版 `v2.1.0`。
 
-> 当前状态：G0 三项技术验证通过，G1–G3 主线功能可运行，G4 已含导入与备份恢复脚本。
-> 甲方六项待确认事项均按设计包默认建议实现并标记 **BLOCKED**，详见 [`docs/decisions/G0-决策记录.md`](docs/decisions/G0-决策记录.md)。
-> 测试证据见 [`docs/evidence/G0/README.md`](docs/evidence/G0/README.md)（PostgreSQL 16 下 88 项后端测试 + 23 项浏览器检查全部通过）。
+## 文档入口
 
-## 快速试用（Windows 本机，单机 SQLite）
+| 文档 | 用途 |
+|---|---|
+| [`docs/LAN安装使用手册.md`](docs/LAN安装使用手册.md) | Windows 主机从零安装、首次使用、日常运维、HTTPS、常见问题 |
+| [`docs/备份恢复与升级手册.md`](docs/备份恢复与升级手册.md) | 一致性备份、恢复演练、正式恢复、升级与回滚 |
+| [`docs/权限矩阵.md`](docs/权限矩阵.md) | 五个角色的服务端实际授权 |
+| [`docs/decisions/V2.1-LAN-决策记录.md`](docs/decisions/V2.1-LAN-决策记录.md) | D1–D7 业务决策（覆盖 G0 中冲突条目） |
+| [`docs/adr/`](docs/adr/) | 架构决策（ADR-004：局域网部署与运行模式） |
+| [`docs/templates/三公司报价模板-字段映射与签收.md`](docs/templates/三公司报价模板-字段映射与签收.md) | 真实样张映射与签收流程 |
+| [`docs/evidence/LAN/`](docs/evidence/LAN/) | L0–L4 门禁证据（测试结果、截图、演练输出） |
 
-需要 Python 3.10+ 和 Node.js 18+。双击 `启动-Windows本机试用.bat`，首次会自动构建前端、创建虚拟环境、安装依赖、写入演示数据并打开浏览器。
+## 正式安装（Windows 局域网）
 
-| 账号 | 角色 | 能看到什么 |
-|---|---|---|
-| `leader` | 部门负责人 | 全部；确认业绩、撤销订单 |
-| `assistant` | 商务助理 | 产品库、报价中心、执行进度、案例 |
-| `sales` / `sales2` | 销售人员 | 自己的项目、售前跟进、执行进度（只读）、自己的业绩；**无报价中心、无金额** |
-| `finance` | 财务人员 | 执行节点、合同/订单确认、项目财务信息 |
-| `admin` | 管理员 | 账号与角色管理 |
+1. 构建机执行 `deploy/windows/build_package.sh <输出目录>`，得到 `Industrial_Sales_Hub_<版本>_LAN_Windows_x64.zip` 与 `.sha256`（由固定提交构建，内含 Python 运行时、PostgreSQL 16、VC++ 运行库、已构建前端）。
+2. 在甲方 Windows 主机解压到纯英文路径（如 `D:\IndustrialSalesHub`），**右键 `01-安装部署.bat` → 以管理员身份运行**，按提示创建管理员。
+3. 其他电脑在浏览器打开安装结束时显示的局域网地址。详细步骤见安装手册。
 
-演示密码均为 `Demo@2026`（仅演示数据，正式环境请勿使用 `seed_demo`）。
+运行模式 `ISH_MODE`：`DEMO`（本机演示，SQLite、演示账号，仅回环访问）/ `LAN`（正式，PostgreSQL，禁止 DEBUG 与演示数据）/ `CLOUD`（保留的 Docker 部署，本期不验收）。
 
-手动启动等价命令：
+## 本机演示（DEMO，仅开发与演示）
 
-```bash
-cd frontend && npm install && npm run build && cd ..     # 构建前端（产物 frontend/dist 不入库）
-cd backend
-python -m venv .venv && .venv\Scripts\activate        # macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
-python manage.py migrate
-python manage.py seed_demo
-python manage.py runserver                              # 打开 http://127.0.0.1:8000
-```
-
-构建后的 `frontend/dist` 由 Django 直接提供。开发前端时：
+`启动-Windows本机试用.bat` 保留为**演示入口**：SQLite、演示账号（`leader / assistant / sales / finance / admin`，密码 `Demo@2026`）、仅 127.0.0.1。
+**不得用于正式数据**；正式部署请使用上面的安装包。
 
 ```bash
-cd frontend && npm install && npm run dev               # http://localhost:5173，/api 代理到 8000
-npm run build                                           # 重新生成 dist
+cd frontend && npm install && npm run build && cd ..
+cd backend && pip install -r requirements.txt
+python manage.py migrate && python manage.py seed_demo && python manage.py runserver
 ```
-
-## 云服务器部署（推荐）
-
-一台 Linux 云服务器（初始评估 2 vCPU / 4GB / 80GB SSD）+ Docker：
-
-```bash
-cp .env.example .env            # 填写 SECRET_KEY、域名、数据库密码
-mkdir -p infra/certs            # 放入 fullchain.pem / privkey.pem
-cd infra && docker compose --env-file ../.env up -d --build
-docker compose --env-file ../.env exec api python manage.py createsuperuser   # 然后在“系统设置”里把角色改为管理员
-```
-
-备份与恢复演练：
-
-```bash
-infra/scripts/backup.sh                          # 数据库 + PDF/附件 一起备份，带 SHA256SUMS
-infra/scripts/restore-verify.sh <备份目录>        # 恢复到临时库并校验报价/案例 PDF 哈希
-```
-
-> 部署模板尚未在甲方服务器上首次运行（开发环境无 Docker），上线前须按 G4 清单实测。
 
 ## 运行测试
 
 ```bash
 cd backend
 pip install -r requirements.txt
-python -m pytest -q                                      # 默认 SQLite（并发测试自动跳过）
-DATABASE_URL=postgres://user:pass@host:5432/db python -m pytest -q   # PostgreSQL：全部 88 项
+python -m pytest -q                                      # 默认 SQLite（并发与备份测试自动跳过）
+DATABASE_URL=postgres://user:pass@host:5432/db python -m pytest -q   # PostgreSQL：全部测试（需 pg_dump/pg_restore 在 PATH）
+# 浏览器验收（LAN 模式，需 playwright）：见 e2e/e2e_v21_lan.py 头部说明
 ```
 
 ## 目录
@@ -93,7 +71,9 @@ backend/
     audit/           审计日志
   tests/             POC-A / POC-B / POC-C / G4 自动化测试
 frontend/            React + TypeScript 前端（构建产物 dist 不入库）
-infra/               Dockerfile、compose、Nginx、备份/恢复脚本
+deploy/windows/      Windows 局域网安装包构建脚本与 01–08/99 运维脚本
+e2e/                 浏览器验收脚本（V2.0 基线、V2.1 LAN）
+infra/               CLOUD 模式：Dockerfile、compose、Nginx（本期不验收）
 docs/
   00-项目基线.md
   adr/               架构决策记录
