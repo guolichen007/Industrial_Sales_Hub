@@ -1,6 +1,7 @@
 """统一错误响应：{code, message, field_errors, request_id}"""
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import IntegrityError, OperationalError
 from django.db.models import ProtectedError
 from django.http import Http404
 from rest_framework import exceptions, status
@@ -33,8 +34,14 @@ def exception_handler(exc, context):
     rid = getattr(request, "request_id", None) if request is not None else None
     if isinstance(exc, DjangoValidationError):
         exc = exceptions.ValidationError(exc.message_dict if hasattr(exc, "error_dict") else exc.messages)
+    if isinstance(exc, FileNotFoundError):
+        exc = BusinessError("文件不存在或已丢失，请联系管理员检查备份。", code="file_missing", http_status=410)
+    if isinstance(exc, OperationalError) and ("could not obtain lock" in str(exc).lower() or "lock timeout" in str(exc).lower()):
+        exc = BusinessError("记录正被他人处理，请稍后重试。", code="busy", http_status=409)
     if isinstance(exc, ProtectedError):
         exc = BusinessError("该记录已被其他业务数据引用，不能删除；可改为停用。", code="protected")
+    if isinstance(exc, IntegrityError):  # ProtectedError 是 IntegrityError 子类，必须先判断
+        exc = BusinessError("数据冲突：记录已存在或已被其他人修改，请刷新后重试。", code="conflict")
     if isinstance(exc, Http404):
         exc = exceptions.NotFound("记录不存在或无权访问")
     if isinstance(exc, DjangoPermissionDenied):
