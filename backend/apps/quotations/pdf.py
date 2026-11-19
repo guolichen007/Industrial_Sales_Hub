@@ -14,7 +14,7 @@ from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Space
 from apps.common.money import D, rmb_upper
 from apps.common.pdfkit import make_numbered_canvas, mx, register_fonts
 
-TEMPLATE_VERSION = "2026.11-r1"
+TEMPLATE_VERSION = "2026.11-r2"  # r2：主体可配置标题/开头语/税列/含税口径、参考价、乘数；内置可分发字体
 
 THEMES = {
     "A": {"name": "模板A·蓝色抬头", "primary": colors.HexColor("#163a5c"), "accent": colors.HexColor("#1f6fa8"), "light": colors.HexColor("#eaf1f8"), "band": True},
@@ -91,7 +91,7 @@ def render_quote_pdf(snap: dict) -> bytes:
     else:
         hs += [("LINEBELOW", (0, -1), (-1, -1), 1.2, th["primary"])]
     header.setStyle(TableStyle(hs))
-    story += [header, Spacer(1, 7 * mm), _p("报　价　单", title_style), Spacer(1, 5 * mm)]
+    story += [header, Spacer(1, 7 * mm), _p(ent.get("quote_title") or "报　价　单", title_style), Spacer(1, 5 * mm)]
 
     # ---- 基本信息 ----
     lab = ParagraphStyle("lab", parent=cell, textColor=colors.HexColor("#5a6571"))
@@ -104,13 +104,26 @@ def render_quote_pdf(snap: dict) -> bytes:
     ]
     it = Table(info, colWidths=[18 * mm, W * 0.5 - 18 * mm, 18 * mm, W * 0.5 - 18 * mm])
     it.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
-    story += [it, Spacer(1, 3 * mm), _p("感谢贵司的信任与支持，现将相关产品报价如下：", small), Spacer(1, 2.5 * mm)]
+    story += [it, Spacer(1, 3 * mm), _p(ent.get("intro_text") or "感谢贵司的信任与支持，现将相关产品报价如下：", small), Spacer(1, 2.5 * mm)]
+    ref = snap.get("reference") or {}
+    if any(ref.get(k) for k in ("copper", "fx", "note")):
+        parts = [x for x in [f"参考铜价：{ref['copper']}" if ref.get("copper") else "", f"参考汇率：{ref['fx']}" if ref.get("fx") else "",
+                             f"有效期至：{ref['valid_until']}" if ref.get("valid_until") else "", ref.get("note") or ""] if x]
+        story += [_p("；".join(parts) + "。上述参考值仅作报价依据说明，价格以本报价单所列为准。", small), Spacer(1, 2 * mm)]
 
     # ---- 明细 ----
+    gross_basis = snap.get("price_basis") == "GROSS"
+    show_tax = ent.get("show_tax_columns", True)
     cols = [9 * mm, 42 * mm, None, 11 * mm, 15 * mm, 22 * mm, 12 * mm, 25 * mm]
+    if not show_tax:
+        cols = [9 * mm, 44 * mm, None, 11 * mm, 17 * mm, 24 * mm, 27 * mm]
     fixed = sum(c for c in cols if c)
     cols[2] = W - fixed
-    rows = [[_p(h, head_c) for h in ["序号", "产品名称 / 型号", "技术参数", "单位", "数量", "未税单价", "税率", "含税金额"]]]
+    price_label = "含税单价" if gross_basis else "未税单价"
+    headers = ["序号", "产品名称 / 型号", "技术参数", "单位", "数量", price_label, "税率", "含税金额"]
+    if not show_tax:
+        headers = ["序号", "产品名称 / 型号", "技术参数", "单位", "数量", price_label, "金额"]
+    rows = [[_p(h, head_c) for h in headers]]
     for i, ln in enumerate(snap["lines"], 1):
         name = f"<font name='{FB}'>{mx(ln['name'], bold=True)}</font><br/>{mx(ln['model'])}"
         if ln.get("brand"):
@@ -125,16 +138,22 @@ def render_quote_pdf(snap: dict) -> bytes:
         if D(ln.get("discount_rate", 0)) > 0:
             pct = _fmt(D(ln['discount_rate']) * 100, 2).rstrip('0').rstrip('.')
             ptxt = (ptxt + "<br/>" if ptxt else "") + f"<font color='#6a7480'>{mx('优惠：' + pct + '%')}</font>"
-        rows.append([
+        qty_txt = _qty(ln["qty"])
+        if ln.get("multiplier") and D(ln["multiplier"]) != 1:
+            qty_txt = f"{qty_txt}×{_qty(ln['multiplier'])}"
+        row = [
             _p(i, ParagraphStyle("c", parent=cell, alignment=TA_CENTER)),
             Paragraph(name, cell),
             Paragraph(ptxt or "—", cell),
             _p(ln["unit"], ParagraphStyle("c2", parent=cell, alignment=TA_CENTER)),
-            _p(_qty(ln["qty"]), cell_r),
+            _p(qty_txt, cell_r),
             _p(_fmt(ln["unit_price"]), cell_r),
             _p(f"{(D(ln['tax_rate']) * 100).normalize():f}%", ParagraphStyle("c3", parent=cell, alignment=TA_CENTER)),
             _p(_fmt(ln["line_gross"]), cell_r),
-        ])
+        ]
+        if not show_tax:
+            del row[6]
+        rows.append(row)
     t = snap["totals"]
     lt = Table(rows, colWidths=cols, repeatRows=1)
     st = [

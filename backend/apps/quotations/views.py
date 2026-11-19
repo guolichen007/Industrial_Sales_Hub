@@ -239,6 +239,9 @@ class RevisionViewSet(viewsets.GenericViewSet):
             data.setdefault("model", "—")
             data.setdefault("unit_price", "0")
         data.setdefault("qty", "1")
+        if "visible_param_keys" not in data and isinstance(data.get("params"), list):
+            # 手工行：默认显示全部填写的参数（与从产品库加入的行一致）
+            data["visible_param_keys"] = [str(p.get("key") or f"p{i + 1}")[:40] for i, p in enumerate(data["params"]) if isinstance(p, dict)]
         if QuoteLine.objects.filter(revision=rev).count() >= 300:
             raise BusinessError("单份报价最多 300 行", code="too_many_lines")
         data.setdefault("sort", QuoteLine.objects.filter(revision=rev).count() + 1)

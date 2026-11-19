@@ -3,7 +3,9 @@ djangorestframework==3.18.3
 psycopg[binary]==3.3.9
 reportlab==5.1.0
 openpyxl==3.1.5
-gunicorn==23.0.0
+xlrd==2.0.2  # 仅用于只读分析真实 .xls 样张
+gunicorn==23.0.0  # 仅 CLOUD（Linux）
+waitress==3.0.2  # Windows 局域网正式 WSGI 服务器
 # 测试
 pytest==9.2.0
 pytest-django==4.14.0

@@ -21,15 +21,20 @@ LATIN = "LatinSans"
 LATIN_BOLD = "LatinSans-Bold"
 _registered = None
 _cjk_cmap = None
+_latin_cmap = set()
 
 _LATIN_CANDIDATES = [
+    (str(Path(__file__).resolve().parent.parent.parent / "fonts" / "DejaVuSans.ttf"), str(Path(__file__).resolve().parent.parent.parent / "fonts" / "DejaVuSans-Bold.ttf")),
     ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
     ("C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf"),
     ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
 ]
 
+BUNDLED_DIR = Path(__file__).resolve().parent.parent.parent / "fonts"
+
 _CANDIDATES = [
-    # (路径, subfontIndex)
+    # (路径, subfontIndex)。首选仓库内置可分发字体（固定版本与校验和，保证不同主机输出一致）
+    (str(BUNDLED_DIR / "DroidSansFallbackFull.ttf"), 0),
     ("C:/Windows/Fonts/msyh.ttc", 0),
     ("C:/Windows/Fonts/simhei.ttf", 0),
     ("C:/Windows/Fonts/simsun.ttc", 0),
@@ -58,13 +63,18 @@ def register_fonts():
                 global _cjk_cmap
                 _cjk_cmap = set(f.face.charToGlyph.keys())
                 _registered = {"font": FONT, "bold": FONT_BOLD, "embedded": True, "path": Path(path).name, "latin": None}
-                # 某些中文字体（如 DroidSansFallback）不含拉丁字符：注册拉丁后备字体，按字符分段混排
-                if not {ord("0"), ord("A"), ord("a")} <= _cjk_cmap:
-                    for reg, bold in _LATIN_CANDIDATES:
+                # 中文字体缺少的字符（拉丁、µ ² ℃ × 等）用拉丁后备字体按字符分段混排
+                latin = [(settings.PDF_LATIN_FONT_PATH, settings.PDF_LATIN_FONT_PATH)] if settings.PDF_LATIN_FONT_PATH else []
+                if True:
+                    for reg, bold in latin + _LATIN_CANDIDATES:
                         if os.path.exists(reg):
-                            pdfmetrics.registerFont(TTFont(LATIN, reg))
+                            lf = TTFont(LATIN, reg)
+                            pdfmetrics.registerFont(lf)
                             pdfmetrics.registerFont(TTFont(LATIN_BOLD, bold if os.path.exists(bold) else reg))
+                            global _latin_cmap
+                            _latin_cmap = set(lf.face.charToGlyph.keys())
                             _registered["latin"] = LATIN
+                            _registered["latin_path"] = Path(reg).name
                             break
                 return _registered
             except Exception:  # noqa: BLE001 —— 字体不支持（如 CFF 轮廓）时尝试下一个
@@ -80,7 +90,9 @@ def _runs(text: str):
         return [(False, text)]
     out, cur, cur_latin = [], "", None
     for ch in text:
-        lat = ord(ch) not in _cjk_cmap and not ch.isspace()
+        o = ord(ch)
+        # 优先中文字体；中文字体没有而拉丁字体有的字符用拉丁字体（都没有则交给中文字体显示占位）
+        lat = (o not in _cjk_cmap and o in _latin_cmap) or (o < 0x80 and o not in _cjk_cmap)
         if ch.isspace():
             lat = cur_latin if cur_latin is not None else False
         if cur_latin is None or lat == cur_latin:
