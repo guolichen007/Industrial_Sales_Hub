@@ -29,11 +29,11 @@ CAP = {
     # ---- 主数据 ----
     "product.write": {LEADER, ASSISTANT},
     "product.see_price": {LEADER, ASSISTANT},
-    "account.read": ALL,
+    "account.read": BUSINESS,
     "account.write": {LEADER, ASSISTANT, SALES},
     "account.delete": {LEADER},
     # ---- 项目 ----
-    "project.read": ALL,
+    "project.read": BUSINESS,  # 管理员（技术角色）默认不浏览业务项目
     "project.create": {LEADER, ASSISTANT, SALES},
     "project.edit": {LEADER, ASSISTANT, SALES},  # SALES 仅限 editable_projects
     "project.edit_any": {LEADER, ASSISTANT},  # 可编辑全部项目、指派负责人与成员、设置“成交”

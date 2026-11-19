@@ -72,8 +72,13 @@ api = [
     path("", include(router.urls)),
 ]
 
+def api_not_found(request, path=""):
+    return JsonResponse({"code": "not_found", "message": "接口不存在", "field_errors": {}, "request_id": getattr(request, "request_id", "")}, status=404)
+
+
 urlpatterns = [
     path("api/", include(api)),
+    re_path(r"^api/(?P<path>.*)$", api_not_found),
     path("healthz", health),
     re_path(r"^(?!api/)(?P<path>.*)$", spa),
 ]

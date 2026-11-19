@@ -1,0 +1,295 @@
+{
+ "results": [
+  {
+   "name": "管理员首页为系统管理（无业务金额）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "管理员创建账号 leader",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "管理员创建账号 assistant",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "管理员创建账号 sales",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "管理员创建账号 sales2",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "管理员创建账号 finance",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "管理员访问报价 API 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "最后一个管理员不能自降级",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "负责人维护三家出具主体",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "负责人首页",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售菜单无报价中心/产品库",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售登记无客户项目",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "项目关联 3 个参与方",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售不能直接设为成交",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "商务新增产品",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "报价改价后后端重算（2×37500×1.13=84,750）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "报价 V1 冻结",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "V1 PDF 下载哈希与存档一致",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "创建 V2 草稿",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "V2 创建后 V1 原字节不变",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "第二家公司/客户报价生成",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售访问 /quotations/1/ 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售访问 /quote-revisions/1/ 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售访问 /projects/1/finance/ 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售项目关联无报价、无订单",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售项目列表无报价数量字段",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售直接下载报价 PDF 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "财务菜单无报价中心",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "财务首页：合同确认与交付执行",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "财务提交金额被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "财务合同表单无金额输入",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "财务确认后项目进入执行并自动建节点",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "财务订单接口无金额与报价编号",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "延期未填原因时保存按钮禁用",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "另一浏览器上下文中销售看到财务更新（1.6s 内）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售执行视图无金额",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "订单生成唯一业绩",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "负责人设置业绩可公开",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "案例预览无金额/合同号/主机厂",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "未人工确认前不能生成",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售生成案例册 PDF",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "案例 PDF 字节不含合同号/主机厂",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "其他销售可看项目公共进度、显示只读",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "其他销售修改项目被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "其他销售看不到该业绩",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "匿名访问 /projects/ 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "匿名访问 /quotations/ 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "匿名访问 /performances/ 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "匿名访问 /users/ 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "手机 390px 无页面级横向溢出（销售首页）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "手机 390px 项目详情无横向溢出",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "5 用户混合浏览 4 轮完成（3.1s）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "浏览器发起的 API 无 5xx（218 个请求）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "普通 API P95 ≤ 1000ms（实测 170.4 ms）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "PDF 生成/下载 P95 ≤ 5000ms（实测 229.2 ms）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "浏览器无 JS 运行错误",
+   "pass": true,
+   "detail": ""
+  }
+ ],
+ "perf": {
+  "api_requests": 216,
+  "api_p50_ms": 15.4,
+  "api_p95_ms": 170.4,
+  "api_max_ms": 202.1,
+  "pdf_requests": 2,
+  "pdf_p95_ms": 229.2,
+  "pdf_max_ms": 229.2,
+  "http_5xx": 0
+ },
+ "js_errors": []
+}

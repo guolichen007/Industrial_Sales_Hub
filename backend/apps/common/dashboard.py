@@ -15,6 +15,8 @@ class DashboardView(APIView):
 
     def get(self, request):
         u = request.user
+        if role_of(u) == "ADMIN":
+            return Response({"role": "ADMIN", "detail": "管理员请使用系统状态接口 /api/system/status/"})
         projects = visible_projects(u)
         mine = editable_projects(u) if role_of(u) == "SALES" else projects
         today = timezone.localdate()

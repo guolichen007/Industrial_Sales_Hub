@@ -6,7 +6,7 @@
 """
 from django.db.models import Q
 
-from apps.common.roles import ADMIN, SALES, can, role_of, sales_project_scope_own
+from apps.common.roles import ADMIN, SALES, can, role_of, sales_project_scope_own  # noqa: F401
 
 from .models import Project
 
@@ -18,7 +18,7 @@ def _own_q(user, prefix=""):
 def visible_projects(user):
     qs = Project.objects.all()
     role = role_of(user)
-    if role is None:
+    if role is None or role == ADMIN:
         return qs.none()
     if role == SALES and sales_project_scope_own():
         qs = qs.filter(_own_q(user)).distinct()

@@ -508,3 +508,14 @@ def test_import_400_performances_idempotent(client_for):
     r = c.post("/api/import-batches/preview/", {"kind": "performances", "file": SimpleUploadedFile("h.xlsx", b.getvalue())}, format="multipart")
     assert r.json()["summary"]["duplicate"] == 400
     assert Performance.objects.count() == 400
+
+
+@pytest.mark.parametrize("url", ["/api/projects/", "/api/accounts/", "/api/contacts/", "/api/public-cases/"])
+def test_admin_cannot_browse_business_data(client_for, base, url):
+    assert client_for("admin").get(url).status_code == 403
+
+
+def test_admin_dashboard_has_no_business_numbers(client_for, base, make_quote):
+    make_quote()
+    d = client_for("admin").get("/api/dashboard/").json()
+    assert set(d) == {"role", "detail"}
