@@ -4,6 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.audit.service import audit
+from apps.common.params import int_param, str_param
 from apps.common.roles import HasCap, can
 
 from .models import Account, Contact, LegalEntity, normalize_name
@@ -48,12 +49,13 @@ class AccountSerializer(serializers.ModelSerializer):
 
 class AccountViewSet(viewsets.ModelViewSet):
     serializer_class = AccountSerializer
-    permission_classes = [HasCap.of("account.write", read_cap="*")]
+    permission_classes = [HasCap.of("account.write", read_cap="account.read")]
 
     def get_queryset(self):
         qs = Account.objects.prefetch_related("contacts").annotate(project_count=Count("project_parties__project", distinct=True))
         p = self.request.query_params
         if q := p.get("q"):
+            q = str_param(q, "q", 100)
             qs = qs.filter(Q(name__icontains=q) | Q(contacts__name__icontains=q) | Q(region__icontains=q)).distinct()
         if k := p.get("kind"):
             # JSON 包含查询在 SQLite/PG 间行为不同，这里用文本匹配保证兼容
@@ -66,7 +68,7 @@ class AccountViewSet(viewsets.ModelViewSet):
         if not can(request.user, "account.delete"):
             from rest_framework.exceptions import PermissionDenied
 
-            raise PermissionDenied("仅负责人/管理员可删除客户；被项目或报价引用的客户只能停用")
+            raise PermissionDenied("仅部门负责人可删除客户；被项目或报价引用的客户只能停用")
         obj = self.get_object()
         audit(request, "delete", "account", obj.id, f"删除客户 {obj.name}")
         return super().destroy(request, *a, **kw)
@@ -81,8 +83,8 @@ class AccountViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="check-duplicate")
     def check_duplicate(self, request):
-        name = request.query_params.get("name", "")
-        exclude = request.query_params.get("exclude")
+        name = str_param(request.query_params.get("name", ""), "name", 150)
+        exclude = int_param(request.query_params.get("exclude"), "exclude")
         n = normalize_name(name)
         if len(n) < 2:
             return Response([])
@@ -93,10 +95,10 @@ class AccountViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["get"])
     def projects(self, request, pk=None):
-        from apps.projects.scope import scoped_projects
+        from apps.projects.scope import visible_projects
 
         acc = self.get_object()
-        qs = scoped_projects(request.user).filter(parties__account=acc).distinct()
+        qs = visible_projects(request.user).filter(parties__account=acc).distinct()
         return Response([
             {"id": p.id, "code": p.code, "name": p.name, "presale_phase": p.presale_phase, "execution_phase": p.execution_phase,
              "roles": sorted({x.party_role for x in p.parties.all() if x.account_id == acc.id})}
@@ -107,11 +109,11 @@ class AccountViewSet(viewsets.ModelViewSet):
 class ContactViewSet(viewsets.ModelViewSet):
     queryset = Contact.objects.select_related("account")
     serializer_class = ContactSerializer
-    permission_classes = [HasCap.of("account.write", read_cap="*")]
+    permission_classes = [HasCap.of("account.write", read_cap="account.read")]
 
     def get_queryset(self):
         qs = super().get_queryset()
-        if a := self.request.query_params.get("account"):
+        if (a := int_param(self.request.query_params.get("account"), "account")) is not None:
             qs = qs.filter(account_id=a)
         return qs
 

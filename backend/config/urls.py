@@ -37,7 +37,7 @@ def health(_request):
 
     with connection.cursor() as c:
         c.execute("SELECT 1")
-    return JsonResponse({"status": "ok"})
+    return JsonResponse({"status": "ok", "version": settings.APP_VERSION, "mode": settings.MODE, "maintenance": settings.MAINTENANCE_FLAG.exists()})
 
 
 def spa(request, path=""):
@@ -57,6 +57,9 @@ api = [
     path("auth/login/", acc.LoginView.as_view()),
     path("auth/logout/", acc.LogoutView.as_view()),
     path("auth/me/", acc.MeView.as_view()),
+    path("public-info/", acc.PublicInfoView.as_view()),
+    path("system/status/", acc.SystemStatusView.as_view()),
+    path("public-cases/", perf.PublicCaseListView.as_view()),
     path("auth/password/", acc.ChangePasswordView.as_view()),
     path("user-options/", acc.UserOptionsView.as_view()),
     path("dashboard/", DashboardView.as_view()),

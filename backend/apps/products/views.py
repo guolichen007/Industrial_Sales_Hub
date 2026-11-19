@@ -2,6 +2,7 @@ from django.db.models import Q
 from rest_framework import serializers, viewsets
 
 from apps.audit.service import audit
+from apps.common.params import int_param, str_param
 from apps.common.roles import HasCap, can
 
 from .models import ParameterDefinition, Product, ProductCategory
@@ -83,8 +84,9 @@ class ProductViewSet(viewsets.ModelViewSet):
         qs = Product.objects.select_related("category")
         p = self.request.query_params
         if q := p.get("q"):
+            q = str_param(q, "q", 100)
             qs = qs.filter(Q(sku__icontains=q) | Q(model__icontains=q) | Q(name__icontains=q) | Q(brand__icontains=q))
-        if c := p.get("category"):
+        if (c := int_param(p.get("category"), "category")) is not None:
             qs = qs.filter(category_id=c)
         if p.get("active") in ("0", "1"):
             qs = qs.filter(active=p["active"] == "1")
@@ -96,4 +98,4 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, s):
         o = s.save()
-        audit(self.request, "update", "product", o.id, f"修改产品 {o.sku}", {k: str(v) for k, v in s.validated_data.items() if k != "params"})
+        audit(self.request, "update", "product", o.id, f"修改产品 {o.sku}", {k: str(v) for k, v in s.validated_data.items() if k not in ("params", "base_price")})

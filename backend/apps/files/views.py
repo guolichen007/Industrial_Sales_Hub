@@ -30,20 +30,41 @@ MIME = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".
         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".zip": "application/zip"}
 
 
-def _owner_access(user, owner_type, owner_id, write=False):
-    """附件权限跟随所属业务对象。"""
-    from apps.projects.scope import scoped_projects
+def _owner_exists(owner_type, owner_id):
+    from apps.contracts.models import OrderConfirmation
+    from apps.performances.models import Performance
+    from apps.projects.models import Project
 
+    model = {"project": Project, "order": OrderConfirmation, "performance": Performance}.get(owner_type)
+    return bool(model and model.objects.filter(pk=owner_id).exists())
+
+
+def _owner_access(user, owner_type, owner_id, write=False):
+    """附件权限跟随所属业务对象的“编辑范围/敏感级别”，而不是项目的公共可见范围（D7）。
+
+    - project：仅可编辑该项目的人（负责人/商务，或销售本人负责/参与的项目）可读写；
+      其他人能看到项目公共进度，但看不到项目附件（附件可能含报价、图纸等）。
+    - order：合同/订单证据。读写需 order.access / order.confirm，且项目在可见范围内。
+    - performance：业绩证据。读写需 performance.write（负责人/商务）。
+    - finance：独立财务台账本期关闭（D5），一律拒绝。
+    """
+    from apps.projects.models import Project
+    from apps.projects.scope import is_project_editable, visible_projects
+
+    if not _owner_exists(owner_type, owner_id):
+        return False
     if owner_type == "project":
-        if not scoped_projects(user).filter(pk=owner_id).exists():
-            return False
-        return can(user, "project.edit") if write else True
+        p = Project.objects.get(pk=owner_id)
+        return can(user, "project.edit") and is_project_editable(user, p)
     if owner_type == "order":
+        from apps.contracts.models import OrderConfirmation
+
+        o = OrderConfirmation.objects.get(pk=owner_id)
+        if not visible_projects(user).filter(pk=o.project_id).exists():
+            return False
         return can(user, "order.confirm" if write else "order.access")
     if owner_type == "performance":
-        return can(user, "performance.write") if write else can(user, "performance.see_amount")
-    if owner_type == "finance":
-        return can(user, "project_finance.access")
+        return can(user, "performance.write")
     return False
 
 
@@ -57,13 +78,13 @@ class AttachmentSerializer(serializers.ModelSerializer):
 
 class AttachmentListView(APIView):
     def get(self, request):
-        ot, oid = request.query_params.get("owner_type"), request.query_params.get("owner_id")
-        if not (ot and oid and oid.isdigit()) or not _owner_access(request.user, ot, int(oid)):
+        ot, oid = request.query_params.get("owner_type"), request.query_params.get("owner_id", "")
+        if not (ot and oid.isdigit()) or not _owner_access(request.user, ot, int(oid)):
             raise PermissionDenied("无权查看该附件列表")
         return Response(AttachmentSerializer(Attachment.objects.filter(owner_type=ot, owner_id=oid), many=True).data)
 
     def post(self, request):
-        ot, oid = request.data.get("owner_type"), str(request.data.get("owner_id", ""))
+        ot, oid = str(request.data.get("owner_type", "")), str(request.data.get("owner_id", ""))
         f = request.FILES.get("file")
         if not f:
             raise BusinessError("请选择文件", code="no_file", http_status=400)
@@ -77,7 +98,7 @@ class AttachmentListView(APIView):
         data = f.read()
         if not any(data.startswith(sig) for sig in ALLOWED[ext]):
             raise BusinessError("文件内容与扩展名不符", code="bad_signature", http_status=400)
-        name = Path(f.name).name[:200]
+        name = Path(f.name).name.replace("\\", "_")[:200]
         att = Attachment.objects.create(owner_type=ot, owner_id=int(oid), filename=name, content_type=MIME[ext], size=len(data),
                                         sha256=hashlib.sha256(data).hexdigest(), storage_key=store_private("attachments", data, ext), uploaded_by=request.user)
         audit(request, "upload", "attachment", att.id, f"上传附件 {name} → {ot}#{oid}")

@@ -25,6 +25,11 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, password, **kw):
+        from django.conf import settings
+        from django.core.management.base import CommandError
+
+        if not settings.DEMO_SEED_ALLOWED:
+            raise CommandError(f"当前为 {settings.MODE} 模式：禁止写入演示数据与演示账号。")
         if User.objects.filter(username="leader").exists():
             self.stdout.write("演示数据已存在，跳过。")
             return

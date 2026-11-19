@@ -1,12 +1,19 @@
 from .models import AuditEvent
 
 # 审计中禁止落入的敏感键
-_REDACT = {"password", "internal_amount", "contract_amount", "unit_price", "received_amount", "invoiced_amount"}
+_REDACT = {"password", "new_password", "old_password", "secret", "token", "internal_amount", "contract_amount", "unit_price", "base_price",
+           "amount", "received_amount", "invoiced_amount", "total_net", "total_tax", "total_gross", "line_net", "line_tax", "line_gross",
+           "expected_amount_note", "bank_account"}
+
+
+def _redact_key(k):
+    k = str(k).lower()
+    return k in _REDACT or "password" in k or "secret" in k or k.endswith("_amount") or k.endswith("_price")
 
 
 def _clean(d):
     if isinstance(d, dict):
-        return {k: ("***" if k in _REDACT else _clean(v)) for k, v in d.items()}
+        return {k: ("***" if _redact_key(k) else _clean(v)) for k, v in d.items()}
     if isinstance(d, list):
         return [_clean(x) for x in d]
     return d if isinstance(d, (str, int, float, bool, type(None))) else str(d)
