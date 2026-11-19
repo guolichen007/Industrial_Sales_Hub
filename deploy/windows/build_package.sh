@@ -144,6 +144,7 @@ cp "$CACHE/WinSW-x64.exe" "$STAGE/runtime/winsw/"
 cp "$CACHE/vc_redist.x64.exe" "$STAGE/runtime/"
 done_ pg; fi
 
+if ! has meta; then
 echo "== 脚本、配置模板、许可"
 cp deploy/windows/*.bat "$STAGE/"
 cp -r deploy/windows/scripts "$STAGE/scripts"
@@ -166,8 +167,10 @@ cat > "$STAGE/licenses/README.txt" <<EOF
 - 字体：DroidSansFallbackFull（Apache-2.0）、DejaVu Sans（Bitstream Vera 许可）
 EOF
 mkdir -p "$STAGE/licenses/WinSW"; echo "WinSW $WINSW_VER — MIT License — https://github.com/winsw/winsw/blob/v$WINSW_VER/LICENSE.txt" > "$STAGE/licenses/WinSW/LICENSE-URL.txt"
+done_ meta; fi
 
 echo "$VERSION (git $SHA)" > "$STAGE/VERSION.txt"
+echo "== 校验清单"
 ( cd "$STAGE" && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum | sed 's#  \./#  #' > SHA256SUMS.txt )
 
 python3 - "$STAGE" "$OUT/BUILD-MANIFEST.json" "$SHA" "$VERSION" "$CACHE" <<'PY'
