@@ -1,0 +1,29 @@
+NOTICE:  database "ishupg" does not exist, skipping
+演示数据已写入。账号：admin/leader/assistant/sales/sales2/finance，密码：Demo@2026
+V2.0 数据就绪：PDF sha 2347b1b7a942e8f4
+完整性校验通过
+== 升级计划
+当前版本 2.1.0-rc1，待执行迁移 5 个：['quotations.0002_quoteline_multiplier_quoterevision_lock_version_and_more', 'projects.0002_executionmilestone_delay_reason', 'organizations.0002_legalentity_intro_text_legalentity_price_basis_and_more', 'contracts.0002_v21_order_ref_norm_and_revision', 'performances.0002_caserelease_withdrawn_caserelease_withdrawn_at_and_more']
+== 执行升级
+用户 6（角色：['ADMIN', 'ASSISTANT', 'FINANCE', 'LEADER', 'SALES']）
+已生成报价版本 1，案例册 0，附件 0，项目参与关系 6
+完整性校验通过
+升级完成：已应用 5 个迁移，完整性校验通过
+旧报价 PDF 原字节哈希不变: True
+订单规范化: [('ht-001', 'HT-001'), ('HT-001', 'HT-001#DUP2')]
+冲突留痕: True
+ish-backup-20261119-180100-pre-upgrade
+  Applying projects.0003_fail_drill...
+CommandError: 迁移失败，系统保持只读维护模式。请按升级手册回滚：演练：故意失败的迁移
+升级失败退出码=0
+维护标志存在: 是
+{
+ "ok": false,
+ "stage": "migrate",
+ "error": "演练：故意失败的迁移",
+ "action": "保持维护模式；请执行 05-恢复备份 回滚到 pre-upgrade 备份，并恢复旧版 app 目录"
+}drill 列残留(事务回滚应为0): 0
+校验通过：ish-backup-20261119-180421-pre-upgrade（版本 2.1.0-rc1，1 个私有文件）
+完整性校验通过
+ [X] 0001_initial
+ [X] 0002_executionmilestone_delay_reason

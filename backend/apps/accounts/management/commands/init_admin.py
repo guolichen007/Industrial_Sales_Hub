@@ -19,12 +19,21 @@ class Command(BaseCommand):
     help = "创建首个正式管理员（仅在没有管理员时可用）"
 
     def add_arguments(self, parser):
-        parser.add_argument("--username", required=True)
+        parser.add_argument("--username", default="")
+        parser.add_argument("--check", action="store_true", help="只检查：已有管理员退出码 0，没有则退出码 3")
         parser.add_argument("--name", default="系统管理员")
         parser.add_argument("--if-missing", action="store_true", help="已有管理员时直接成功退出（安装脚本重复执行用）")
 
-    def handle(self, *args, username, name, if_missing, **kw):
-        if User.objects.filter(role=ADMIN, is_active=True).exists():
+    def handle(self, *args, username, name, if_missing, check, **kw):
+        exists = User.objects.filter(role=ADMIN, is_active=True).exists()
+        if check:
+            self.stdout.write("已存在管理员" if exists else "尚无管理员")
+            if not exists:
+                raise SystemExit(3)
+            return
+        if not username:
+            raise CommandError("请指定 --username")
+        if exists:
             if if_missing:
                 self.stdout.write("已存在管理员，跳过初始化。")
                 return
