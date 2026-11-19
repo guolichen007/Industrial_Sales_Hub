@@ -1,0 +1,5 @@
+[
+  {"code": "A", "short_name": "公司A（待填）", "name": "【请在系统设置中填写公司A合法全称】", "template_key": "A", "price_basis": "NET", "default_terms": "价格含 13% 增值税专用发票。\n本报价未尽事宜以双方签订的合同为准。", "footer_note": "本报价单由系统生成，未经盖章仅供参考", "template_verified": false},
+  {"code": "B", "short_name": "公司B（待填）", "name": "【请在系统设置中填写公司B合法全称】", "template_key": "B", "price_basis": "NET", "default_terms": "价格含 13% 增值税专用发票。\n本报价未尽事宜以双方签订的合同为准。", "footer_note": "本报价单由系统生成，未经盖章仅供参考", "template_verified": false},
+  {"code": "C", "short_name": "公司C（待填）", "name": "【请在系统设置中填写公司C合法全称】", "template_key": "C", "price_basis": "NET", "default_terms": "价格含 13% 增值税专用发票。\n本报价未尽事宜以双方签订的合同为准。", "footer_note": "本报价单由系统生成，未经盖章仅供参考", "template_verified": false}
+]
