@@ -4,6 +4,7 @@
 param([Parameter(Mandatory = $true)][string]$BackupPath, [switch]$Production)
 . (Join-Path $PSScriptRoot 'common.ps1')
 Start-Log 'restore'
+Assert-CanReadConfig
 if (-not (Test-Path -LiteralPath $AppEnv)) { Fail '尚未安装' 30 }
 $cfg = Read-AppEnv
 $BackupPath = (Resolve-Path -LiteralPath $BackupPath).Path
@@ -18,7 +19,7 @@ if (-not $Production) {
 }
 Assert-Admin '停止/启动服务并覆盖正式数据'
 Write-Host "将用以下备份覆盖正式数据：`n  $BackupPath" -ForegroundColor Yellow
-$phrase = Read-Host '此操作会替换当前全部业务数据。请输入“确认恢复”四个字继续'
+$phrase = Read-Host '此操作会替换当前全部业务数据。请输入「确认恢复」四个字继续'
 if ($phrase -ne '确认恢复') { Write-Host '已取消'; exit 0 }
 Write-Step '先备份当前状态（以便撤销本次恢复）'
 Invoke-Manage @('ish_backup', '--dest', $cfg['ISH_BACKUP_DIR'], '--pg-bin', $PgBin, '--label', 'before-restore') | Out-Null
@@ -37,7 +38,7 @@ $priv = Join-Path $Data 'private'
 $old = "$priv.old-" + (Get-Date -Format 'yyyyMMddHHmmss')
 Rename-Item -LiteralPath $priv -NewName (Split-Path $old -Leaf)
 Copy-Item -LiteralPath (Join-Path $BackupPath 'private') -Destination $priv -Recurse
-Protect-Directory $priv ('NT SERVICE\' + $SvcApp)
+Protect-Directory $priv ('NT SERVICE\' + $SvcApp) 'Modify'
 Write-Step '完整性校验'
 $rc = Invoke-Manage @('verify_integrity', '--expect-manifest', (Join-Path $BackupPath 'manifest.json')) -AllowFail
 if ($rc -ne 0) { Fail "恢复后完整性校验失败。原私有文件保存在 $old；可用 before-restore 备份再次恢复。" 41 }

@@ -2,6 +2,7 @@
 param([switch]$NoBrowser)
 . (Join-Path $PSScriptRoot 'common.ps1')
 Start-Log 'start'
+Assert-CanReadConfig
 if (-not (Test-Path -LiteralPath $AppEnv)) { Fail '尚未安装，请先运行 01-安装部署.bat' 30 }
 $cfg = Read-AppEnv
 $port = [int]($cfg['ISH_LISTEN'] -split ':')[-1]

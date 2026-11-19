@@ -2,6 +2,7 @@
 param([string]$Dest = '', [string]$CopyTo = '')
 . (Join-Path $PSScriptRoot 'common.ps1')
 Start-Log 'backup'
+Assert-CanReadConfig
 if (-not (Test-Path -LiteralPath $AppEnv)) { Fail '尚未安装' 30 }
 $cfg = Read-AppEnv
 if (-not $Dest) { $Dest = $cfg['ISH_BACKUP_DIR'] }

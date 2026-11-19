@@ -108,9 +108,11 @@ Lib\\site-packages
 import site
 EOF
 echo "== Python 依赖（win_amd64 wheel，仅运行所需）"
-WHEELS="$CACHE/wheels"
-mkdir -p "$WHEELS"
 grep -v -E "^(pytest|gunicorn)" backend/requirements.txt | sed 's/#.*//' | grep -v '^\s*$' > "$OUT/req-runtime.txt"
+# pip 按构建机（Linux）求值环境标记，Windows 专属依赖（tzdata：嵌入式 Python 无系统时区库）需显式加入
+echo "tzdata==2025.2" >> "$OUT/req-runtime.txt"
+WHEELS="$OUT/wheels-$SHA"   # 每次构建使用全新目录，避免缓存中的旧版本 wheel 混入
+rm -rf "$WHEELS"; mkdir -p "$WHEELS"
 pip download --only-binary=:all: --platform win_amd64 --python-version 3.12 --implementation cp -d "$WHEELS" -r "$OUT/req-runtime.txt" -q
 mkdir -p "$SITE"
 python3 - "$WHEELS" "$SITE" "$OUT/req-runtime.txt" <<'PY'
@@ -123,7 +125,7 @@ for w in wheels.glob("*.whl"):
     if "win_amd64" in w.name or "none-any" in w.name or "py2.py3" in w.name:
         names.add(w)
 for w in sorted(names):
-    if re.match(r"(pytest|pluggy|iniconfig|pygments|exceptiongroup|tomli|gunicorn|packaging)-", w.name, re.I):
+    if re.match(r"(pytest|pytest_django|pluggy|iniconfig|pygments|exceptiongroup|tomli|gunicorn|packaging)[-_]", w.name, re.I):
         continue
     with zipfile.ZipFile(w) as z:
         z.extractall(site)
@@ -185,7 +187,23 @@ json.dump({"name": stage.name, "version": ver, "git_sha": sha, "files": sum(1 fo
 PY
 
 echo "== 打包"
-( cd "$OUT/stage" && rm -f "$OUT/$NAME.zip" && zip -q -r -X "$OUT/$NAME.zip" "$NAME" )
+# 用 Python zipfile 打包：文件名以 UTF-8 标记写入，Windows 资源管理器可正确显示中文文件名
+python3 - "$OUT/stage" "$NAME" "$OUT/$NAME.zip" <<'PY'
+import os, sys, zipfile
+base, name, out = sys.argv[1], sys.argv[2], sys.argv[3]
+if os.path.exists(out): os.remove(out)
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+    for root, dirs, files in os.walk(os.path.join(base, name)):
+        dirs.sort()
+        for f in sorted(files):
+            full = os.path.join(root, f)
+            arc = os.path.relpath(full, base).replace(os.sep, "/")
+            zi = zipfile.ZipInfo(arc, date_time=(2026, 1, 1, 0, 0, 0))  # 固定时间戳，便于复现
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zi.external_attr = 0o644 << 16
+            with open(full, "rb") as fh:
+                z.writestr(zi, fh.read())
+PY
 ( cd "$OUT" && sha256sum "$NAME.zip" > "$NAME.zip.sha256" )
 cp "$STAGE/SHA256SUMS.txt" "$OUT/$NAME.SHA256SUMS.txt"
 echo "完成：$OUT/$NAME.zip（$(du -h "$OUT/$NAME.zip" | cut -f1)），git $SHA"

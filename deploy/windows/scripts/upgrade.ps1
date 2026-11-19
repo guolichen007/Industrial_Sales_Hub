@@ -10,6 +10,8 @@ if ($NewPackageDir -eq $Root) { Fail '请把新版本安装包解压到另一个
 foreach ($p in @('app\backend\manage.py', 'runtime\python\python.exe', 'SHA256SUMS.txt', 'VERSION.txt')) {
     if (-not (Test-Path -LiteralPath (Join-Path $NewPackageDir $p))) { Fail "新安装包不完整：缺少 $p" 51 }
 }
+Write-Step '校验新安装包'
+Verify-PackageChecksums $NewPackageDir
 $newVer = (Get-Content -LiteralPath (Join-Path $NewPackageDir 'VERSION.txt') -Raw).Trim()
 $curVer = (Get-Content -LiteralPath (Join-Path $Root 'VERSION.txt') -Raw).Trim()
 Write-Host "当前版本：$curVer`n新版本：$newVer"
@@ -25,12 +27,28 @@ Write-Step '替换程序文件（保留旧版本以便回滚）'
 Rename-Item -LiteralPath $App -NewName (Split-Path $oldApp -Leaf)
 Copy-Item -LiteralPath (Join-Path $NewPackageDir 'app') -Destination $App -Recurse
 Copy-Item -LiteralPath $Runtime -Destination $oldRt -Recurse
-Copy-Item -LiteralPath (Join-Path $NewPackageDir 'runtime\python') -Destination (Join-Path $Runtime 'python.new') -Recurse
-Remove-Item -LiteralPath (Join-Path $Runtime 'python') -Recurse -Force
-Rename-Item -LiteralPath (Join-Path $Runtime 'python.new') -NewName 'python'
-foreach ($f in @('VERSION.txt', 'SHA256SUMS.txt', 'licenses', 'scripts', '*.bat', '*.md')) {
-    Get-ChildItem -Path (Join-Path $NewPackageDir $f) -ErrorAction SilentlyContinue | Copy-Item -Destination $Root -Recurse -Force
+foreach ($sub in @('python', 'pgsql', 'winsw')) {
+    $src = Join-Path $NewPackageDir "runtime\$sub"
+    if ($sub -eq 'pgsql' -and (Get-ServiceState $SvcDb) -eq 'Running') {
+        # 数据库二进制更新需停止数据库；同一大版本的小版本升级可直接替换
+        Stop-Service -Name $SvcDb
+    }
+    Remove-Item -LiteralPath (Join-Path $Runtime $sub) -Recurse -Force
+    Copy-Item -LiteralPath $src -Destination (Join-Path $Runtime $sub) -Recurse
 }
+Copy-Item -LiteralPath (Join-Path $NewPackageDir 'runtime\vc_redist.x64.exe') -Destination $Runtime -Force
+foreach ($dir in @('scripts', 'licenses', 'config-templates')) {
+    Remove-Item -LiteralPath (Join-Path $Root $dir) -Recurse -Force -ErrorAction SilentlyContinue
+    Copy-Item -LiteralPath (Join-Path $NewPackageDir $dir) -Destination (Join-Path $Root $dir) -Recurse
+}
+foreach ($f in @('VERSION.txt', 'SHA256SUMS.txt', '使用说明.md', '备份恢复与升级手册.md')) {
+    Copy-Item -LiteralPath (Join-Path $NewPackageDir $f) -Destination $Root -Force
+}
+# 不覆盖正在运行的 07-升级程序.bat（cmd 按偏移读取批处理，覆盖会执行乱码）
+Get-ChildItem -LiteralPath $NewPackageDir -Filter '*.bat' | Where-Object { $_.Name -ne '07-升级程序.bat' } | Copy-Item -Destination $Root -Force
+Set-RootAcl
+Grant-ServiceDirs
+if ((Get-ServiceState $SvcDb) -ne 'Running') { Start-Service -Name $SvcDb; if (-not (Wait-Db ([int]$cfg['ISH_DB_PORT']) 60)) { Fail '数据库未能启动' 23 } }
 Write-Step '预备份 + 迁移 + 完整性校验'
 $rc = Invoke-Manage @('ish_upgrade', '--backup-dest', $cfg['ISH_BACKUP_DIR'], '--pg-bin', $PgBin) -AllowFail
 if ($rc -ne 0) {

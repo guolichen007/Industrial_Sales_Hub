@@ -24,6 +24,10 @@ Assert-Admin '安装 Windows 服务、配置防火墙与目录权限'
 $synced = Test-SyncedFolder $Root
 if ($synced) { Fail "安装目录位于同步盘（$synced）。数据库目录放入同步盘会损坏数据，请解压到本地磁盘（例如 D:\IndustrialSalesHub）。" 14 }
 if ($Root.StartsWith('\\')) { Fail '不能安装在网络共享路径上，请使用本机磁盘。' 14 }
+if (-not (Test-AsciiPath $Root)) {
+    # PostgreSQL 的 initdb/postgres 按系统 ANSI 代码页处理路径，中文路径在部分系统上会导致数据库无法启动
+    Fail "安装路径包含中文或特殊字符：$Root`n请解压到纯英文路径（例如 D:\IndustrialSalesHub）。路径中可以包含空格。" 14
+}
 $drive = (Get-Item -LiteralPath $Root).PSDrive
 $freeGb = [math]::Round($drive.Free / 1GB, 1)
 if ($freeGb -lt 5) { Fail "磁盘 $($drive.Name): 剩余 $freeGb GB，至少需要 5 GB（建议预留 50 GB）。" 15 }
@@ -58,8 +62,6 @@ if ($vcOk) { Write-Ok '已安装' } else {
 # ---------- 3. 目录与配置 ----------
 Write-Step '准备目录与配置'
 foreach ($d in @($Config, $Data, (Join-Path $Data 'private'), $Logs, $Backups, $Services)) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
-$appSid = 'NT SERVICE\' + $SvcApp
-$dbSid = 'NT SERVICE\' + $SvcDb
 if (-not $installed) {
     $dbPass = New-RandomSecret 24
     $lan = Get-LanAddresses
@@ -109,14 +111,15 @@ if (-not (Test-Path -LiteralPath (Join-Path $PgData 'PG_VERSION'))) {
         'max_connections = 60'
         "shared_buffers = '256MB'"
         "logging_collector = on"
-        "log_directory = '$(($Logs -replace '\\','/'))/postgresql'"
+        "log_directory = 'log'"
         "log_rotation_age = '7d'"
         "lc_messages = 'C'"
         "timezone = 'Asia/Shanghai'"
     ) | Add-Content -LiteralPath (Join-Path $PgData 'postgresql.conf') -Encoding ASCII
     @('# 仅本机 scram 认证', 'host all all 127.0.0.1/32 scram-sha-256', 'host all all ::1/128 scram-sha-256') | Set-Content -LiteralPath (Join-Path $PgData 'pg_hba.conf') -Encoding ASCII
-    # 超级用户密码仅用于本次安装：写入受保护文件，供运维紧急使用
-    Set-Content -LiteralPath (Join-Path $Config 'postgres-superuser.txt') -Value "postgres 超级用户密码（仅运维紧急使用，勿外传）：$super" -Encoding UTF8
+    # 超级用户密码：写入仅管理员可读的 config\admin-only（应用服务账户不可读）
+    New-Item -ItemType Directory -Force -Path $AdminOnly | Out-Null
+    Set-Content -LiteralPath (Join-Path $AdminOnly 'postgres-superuser.txt') -Value "postgres 超级用户密码（仅运维紧急使用，勿外传）：$super" -Encoding UTF8
     Write-Ok '数据库目录已初始化'
 } else { Write-Ok '数据库目录已存在，跳过 initdb' }
 
@@ -126,7 +129,12 @@ $winsw = Join-Path $Runtime 'winsw\WinSW-x64.exe'
 function Install-Svc([string]$id, [string]$xml) {
     $dir = Join-Path $Services $id
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    Copy-Item -LiteralPath $winsw -Destination (Join-Path $dir "$id.exe") -Force
+    $dst = Join-Path $dir "$id.exe"
+    # 服务运行中时 exe 被占用：哈希相同则不复制（重复安装/修复不失败）
+    if (-not (Test-Path -LiteralPath $dst) -or (Get-FileHash -LiteralPath $dst).Hash -ne (Get-FileHash -LiteralPath $winsw).Hash) {
+        if ((Get-ServiceState $id) -eq 'Running') { Stop-Service -Name $id }
+        Copy-Item -LiteralPath $winsw -Destination $dst -Force
+    }
     Set-Content -LiteralPath (Join-Path $dir "$id.xml") -Value $xml -Encoding UTF8
     if ((Get-ServiceState $id) -eq 'NotInstalled') {
         $rc = Invoke-Exe (Join-Path $dir "$id.exe") @('install')
@@ -137,8 +145,12 @@ function Install-Svc([string]$id, [string]$xml) {
         Write-Ok "服务 $id 已存在，已更新配置文件（不重复创建）"
     }
     # 以 Windows 虚拟服务账户（NT SERVICE\<服务名>，无密码、低权限）运行
-    $rc = Invoke-Exe "$env:SystemRoot\System32\sc.exe" @('config', $id, 'obj=', "NT SERVICE\$id", 'password=', '')
-    if ($rc -ne 0) { Fail "无法将服务 $id 配置为虚拟服务账户" 22 }
+    # 不用 sc.exe：PowerShell 5.1 会丢弃空字符串参数（password= ""），改用 WMI Win32_Service.Change
+    $svc = Get-CimInstance Win32_Service -Filter "Name='$id'"
+    if ($svc.StartName -ne "NT SERVICE\$id") {
+        $r = Invoke-CimMethod -InputObject $svc -MethodName Change -Arguments @{ StartName = "NT SERVICE\$id"; StartPassword = '' }
+        if ($r.ReturnValue -ne 0) { Fail "无法将服务 $id 配置为虚拟服务账户（Win32_Service.Change 返回 $($r.ReturnValue)）" 22 }
+    }
 }
 $pgExe = Join-Path $PgBin 'pg_ctl.exe'
 $dbXml = @"
@@ -165,11 +177,9 @@ $appXml = @"
   <name>Industrial Sales Hub 应用</name>
   <description>工业销售管理系统 Web 应用（Waitress，端口 $AppPort）</description>
   <executable>$Python</executable>
-  <arguments>"$(Join-Path $Backend 'serve.py')"</arguments>
+  <arguments>-X utf8 -B "$(Join-Path $Backend 'serve.py')"</arguments>
   <workingdirectory>$Backend</workingdirectory>
   <env name="ISH_CONFIG_FILE" value="$AppEnv"/>
-  <env name="PYTHONUTF8" value="1"/>
-  <env name="PYTHONDONTWRITEBYTECODE" value="1"/>
   <depend>$SvcDb</depend>
   <startmode>Automatic</startmode>
   <delayedAutoStart>true</delayedAutoStart>
@@ -185,32 +195,18 @@ $appXml = @"
 Install-Svc $SvcDb $dbXml
 Install-Svc $SvcApp $appXml
 
-Write-Step '设置目录权限（数据、配置、备份仅管理员与服务账户可访问）'
-Protect-Directory $PgData $dbSid
-Protect-Directory $Config $appSid
-Protect-Directory (Join-Path $Data 'private') $appSid
-Protect-Directory $Backups $appSid
-foreach ($d in @($Data, $Logs)) {
-    $acl = Get-Acl -LiteralPath $d
-    foreach ($sid in @($appSid, $dbSid)) { $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'Modify', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }
-    Set-Acl -LiteralPath $d -AclObject $acl
-}
-# 应用目录与运行时：服务账户只读
-foreach ($d in @($App, $Runtime)) {
-    $acl = Get-Acl -LiteralPath $d
-    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($appSid, 'ReadAndExecute', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
-    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($dbSid, 'ReadAndExecute', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
-    Set-Acl -LiteralPath $d -AclObject $acl
-}
+Write-Step '设置目录权限（根目录普通用户只读；数据/配置/备份仅管理员与服务账户）'
+Set-RootAcl
+Grant-ServiceDirs
 Write-Ok '权限已设置'
 
 Write-Step '启动数据库'
-Start-Service -Name $SvcDb
-if (-not (Wait-Db $DbPort 60)) { Fail '数据库未能在 60 秒内就绪（见 logs\postgresql 与 logs\service）' 23 }
+try { Start-Service -Name $SvcDb -ErrorAction Stop } catch { Fail "数据库服务启动失败：$($_.Exception.Message)（见 logs\service 与 data\pgdata\log）" 23 }
+if (-not (Wait-Db $DbPort 60)) { Fail '数据库未能在 60 秒内就绪（见 data\pgdata\log 与 logs\service）' 23 }
 Write-Ok '数据库就绪'
 
 Write-Step '创建应用数据库账号与数据库'
-$superPw = ((Get-Content -LiteralPath (Join-Path $Config 'postgres-superuser.txt') -Encoding UTF8) -split '：', 2)[1].Trim()
+$superPw = ((Get-Content -LiteralPath (Join-Path $AdminOnly 'postgres-superuser.txt') -Encoding UTF8) -split '：', 2)[1].Trim()
 $env:PGPASSWORD = $superPw
 try {
     $psql = Join-Path $PgBin 'psql.exe'
@@ -254,9 +250,11 @@ $ruleName = "Industrial Sales Hub (TCP $AppPort)"
 Get-NetFirewallRule -DisplayName 'Industrial Sales Hub*' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort $AppPort -Action Allow -Profile Private, Domain -RemoteAddress $AllowedRemote | Out-Null
 Write-Ok "已放行 TCP $AppPort（远程范围：$AllowedRemote；数据库端口 $DbPort 不对外开放）"
+$pub = Get-NetConnectionProfile -ErrorAction SilentlyContinue | Where-Object { $_.NetworkCategory -eq 'Public' }
+if ($pub) { Write-Warn2 ("网络 {0} 当前为「公用」类型，防火墙规则不对公用网络生效。请在 Windows 设置中改为「专用网络」，否则其他电脑无法访问。" -f (($pub | Select-Object -ExpandProperty Name) -join '、')) }
 
 Write-Step '启动应用'
-Start-Service -Name $SvcApp
+try { Start-Service -Name $SvcApp -ErrorAction Stop } catch { Fail "应用服务启动失败：$($_.Exception.Message)（见 logs\service 与 logs\app.log）" 25 }
 $health = Wait-Http "http://127.0.0.1:$AppPort/healthz" 120
 if (-not $health) { Fail '应用未能在 120 秒内就绪（见 logs\service 与 logs\app.log）' 25 }
 Write-Ok "应用就绪：$health"

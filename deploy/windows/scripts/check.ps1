@@ -1,6 +1,7 @@
 ﻿# 06-检查系统：版本、服务、端口、数据库、健康、备份、磁盘、日志、局域网地址（只读，不修改任何东西）
 . (Join-Path $PSScriptRoot 'common.ps1')
 Start-Log 'check'
+Assert-CanReadConfig
 $ok = $true
 $ver = if (Test-Path -LiteralPath (Join-Path $Root 'VERSION.txt')) { Get-Content -LiteralPath (Join-Path $Root 'VERSION.txt') -Raw } else { '未知' }
 Write-Host "版本：$ver"
@@ -34,7 +35,7 @@ if (Test-Path -LiteralPath $bs) {
     } else { Write-Warn2 "最近一次备份失败：$($b.error)"; $ok = $false }
 } else { Write-Warn2 '尚无备份记录'; $ok = $false }
 $task = Get-ScheduledTask -TaskName 'IndustrialSalesHub-DailyBackup' -ErrorAction SilentlyContinue
-if ($task) { Write-Ok "每日备份计划任务：$($task.State)" } else { Write-Warn2 '未配置每日备份计划任务（运行 04-立即备份.bat -Schedule 02:00）'; $ok = $false }
+if ($task) { Write-Ok "每日备份计划任务：$($task.State)" } else { Write-Warn2 '未配置每日备份计划任务（以管理员身份运行 08-配置每日备份.bat）'; $ok = $false }
 $drive = (Get-Item -LiteralPath $Root).PSDrive
 Write-Host ("磁盘 {0}: 剩余 {1:N1} GB" -f $drive.Name, ($drive.Free / 1GB))
 if (Test-Path (Join-Path $Data 'MAINTENANCE')) { Write-Warn2 ('系统处于维护（只读）状态：' + (Get-Content (Join-Path $Data 'MAINTENANCE') -Raw)); $ok = $false }
