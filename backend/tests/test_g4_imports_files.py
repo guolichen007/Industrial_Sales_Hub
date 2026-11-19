@@ -81,8 +81,7 @@ def test_attachment_signature_and_scope(client_for, base):
     assert c.get(f"/api/attachments/{aid}/download/").status_code == 200
     # 其他销售看不到该项目 → 不能下载
     assert client_for("sales2").get(f"/api/attachments/{aid}/download/").status_code == 403
-    # 销售不能读财务附件
+    # V2.1 D5：财务台账附件类型关闭，任何角色均不能上传/读取
     r = client_for("finance").post("/api/attachments/", {"owner_type": "finance", "owner_id": pid, "file": SimpleUploadedFile("invoice.pdf", b"%PDF-1.4 x")}, format="multipart")
-    assert r.status_code == 201
-    assert c.get(f"/api/attachments/{r.json()['id']}/download/").status_code == 403
+    assert r.status_code == 403
     assert c.get(f"/api/attachments/?owner_type=finance&owner_id={pid}").status_code == 403

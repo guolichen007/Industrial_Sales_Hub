@@ -1,0 +1,15 @@
+{"unfrozen": 0, "lines_after_frozen": 0, "trials": 30, "errors": []}
+ "F1 财务可写合同金额": [
+  403,
+  null
+ ],
+ "F2 财务可读合同金额": false,
+ "F3 财务台账可写": 404,
+ "S1 销售可见 quote_count": false,
+ "S2 销售可见 expected_amount_note 字段": false,
+ "A1 管理员可读报价": 403,
+ "A2 最后管理员可自降级": 409,
+ "E1 非数字过滤(销售403先拦截)": 403,
+ "E2 非数字过滤": 400,
+ "E3 登录数组体": 400
+}

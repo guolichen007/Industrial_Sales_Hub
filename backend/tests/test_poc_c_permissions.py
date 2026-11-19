@@ -20,7 +20,8 @@ def _keys(obj):
 
 
 # ---------- 报价中心访问矩阵 ----------
-@pytest.mark.parametrize("role,expected", [("admin", 200), ("leader", 200), ("assistant", 200), ("sales", 403), ("finance", 403)])
+# V2.1：管理员为技术角色，不再默认可读报价
+@pytest.mark.parametrize("role,expected", [("admin", 403), ("leader", 200), ("assistant", 200), ("sales", 403), ("finance", 403)])
 def test_quote_list_access(role, expected, client_for, make_quote):
     make_quote()
     assert client_for(role).get("/api/quotations/").status_code == expected
@@ -40,7 +41,6 @@ def test_sales_project_detail_and_related_never_contain_amounts(client_for, make
     make_quote()
     lc = client_for("leader")
     lc.post("/api/order-confirmations/", {"project": base["p_sales"].id, "legal_entity": base["ents"][0].id, "basis": "CONTRACT", "order_ref": "HT-S", "contract_amount": "99999", "confirm_now": True}, format="json")
-    lc.post(f"/api/projects/{base['p_sales'].id}/finance/", {"kind": "RECEIPT", "amount": "50000", "happened_on": "2026-11-01"}, format="json")
     c = client_for("sales")
     for url in [f"/api/projects/{base['p_sales'].id}/", f"/api/projects/{base['p_sales'].id}/related/", "/api/projects/", "/api/dashboard/", "/api/performances/", f"/api/projects/{base['p_sales'].id}/milestones/", "/api/products/"]:
         r = c.get(url)
@@ -54,15 +54,16 @@ def test_sales_project_detail_and_related_never_contain_amounts(client_for, make
     assert len(rel["performances"]) == 1
 
 
-def test_sales_quote_summary_flag_returns_whitelisted_fields_only(client_for, make_quote, base, settings):
+def test_sales_never_gets_quote_summary_even_with_legacy_flag(client_for, make_quote, base, settings):
+    # V2.1 D2：销售不获取报价摘要；旧开关 SALES_QUOTE_SUMMARY 已移除，设置也无效
     settings.SALES_QUOTE_SUMMARY = True
     make_quote()
     rel = client_for("sales").get(f"/api/projects/{base['p_sales'].id}/related/").json()
-    assert len(rel["quotes"]) == 1
-    assert set(rel["quotes"][0]) == {"id", "code", "recipient_name", "legal_entity_name", "status_label", "updated_at"}
+    assert rel["quotes"] == []
 
 
-def test_sales_row_level_scope(client_for, base):
+def test_sales_row_level_scope(client_for, base, settings):
+    settings.PROJECT_VISIBILITY = "OWN"  # V2.1 D7 可切换为“仅本人项目”
     c = client_for("sales")
     ids = {p["id"] for p in c.get("/api/projects/").json()}
     assert base["p_sales"].id in ids and base["p_other"].id not in ids
@@ -72,7 +73,7 @@ def test_sales_row_level_scope(client_for, base):
 
 
 def test_sales_see_all_flag_still_blocks_writes_to_others(client_for, base, settings):
-    settings.SALES_SEE_ALL_PROJECTS = True
+    settings.PROJECT_VISIBILITY = "ALL"  # V2.1 D7 默认
     c = client_for("sales")
     assert c.get(f"/api/projects/{base['p_other'].id}/").status_code == 200
     assert c.patch(f"/api/projects/{base['p_other'].id}/", {"name": "x"}, format="json").status_code == 403
@@ -85,7 +86,8 @@ def test_sales_cannot_change_owner(client_for, base, users):
 
 # ---------- 进度两条线的写权限 ----------
 @pytest.mark.parametrize("role,presale,execution", [
-    ("admin", 201, 201), ("leader", 201, 201), ("assistant", 201, 201), ("sales", 201, 403), ("finance", 403, 201),
+    ("admin", 403, 403),  # V2.1：管理员不参与业务录入
+    ("leader", 201, 201), ("assistant", 201, 201), ("sales", 201, 403), ("finance", 403, 201),
 ])
 def test_update_stream_write_matrix(role, presale, execution, client_for, base):
     pid = base["p_sales"].id
@@ -96,7 +98,9 @@ def test_update_stream_write_matrix(role, presale, execution, client_for, base):
 
 def test_U07_finance_updates_milestone_sales_sees_safe_timeline(client_for, base):
     pid = base["p_sales"].id
-    client_for("finance").post(f"/api/projects/{pid}/milestones/")
+    # V2.1：执行节点只在合同/订单确认后自动建立（财务可确认，但不能录入金额）
+    r = client_for("finance").post("/api/order-confirmations/", {"project": pid, "legal_entity": base["ents"][0].id, "basis": "CONTRACT", "order_ref": "HT-U07", "confirm_now": True}, format="json")
+    assert r.status_code == 201, r.content
     ms = client_for("finance").get(f"/api/projects/{pid}/milestones/").json()
     mid = next(m["id"] for m in ms if m["stage"] == "发货")
     r = client_for("finance").patch(f"/api/projects/{pid}/milestones/{mid}/", {"state": "DONE", "note": "已发货"}, format="json")
@@ -104,9 +108,9 @@ def test_U07_finance_updates_milestone_sales_sees_safe_timeline(client_for, base
     assert client_for("sales").patch(f"/api/projects/{pid}/milestones/{mid}/", {"state": "PENDING"}, format="json").status_code == 403
     view = client_for("sales").get(f"/api/projects/{pid}/").json()
     assert any(m["stage"] == "发货" and m["state"] == "DONE" for m in view["milestones"])
-    assert client_for("sales").get(f"/api/projects/{pid}/finance/").status_code == 403
-    assert client_for("assistant").get(f"/api/projects/{pid}/finance/").status_code == 403
-    assert client_for("finance").get(f"/api/projects/{pid}/finance/").status_code == 200
+    # V2.1 D5：独立财务台账接口已关闭
+    for role in ("sales", "assistant", "finance", "leader"):
+        assert client_for(role).get(f"/api/projects/{pid}/finance/").status_code == 404
 
 
 def test_finance_cannot_edit_quotes_or_presale(client_for, make_quote, base):
@@ -118,14 +122,14 @@ def test_finance_cannot_edit_quotes_or_presale(client_for, make_quote, base):
 
 
 # ---------- 产品与账号 ----------
-@pytest.mark.parametrize("role,expected", [("admin", 201), ("leader", 201), ("assistant", 201), ("sales", 403), ("finance", 403)])
+@pytest.mark.parametrize("role,expected", [("admin", 403), ("leader", 201), ("assistant", 201), ("sales", 403), ("finance", 403)])
 def test_product_write_matrix(role, expected, client_for, base):
     r = client_for(role).post("/api/products/", {"sku": f"N-{role}", "model": "N", "name": "新品", "category": base["prods"][0].category_id, "base_price": "10"}, format="json")
     assert r.status_code == expected
 
 
 def test_products_cannot_be_deleted(client_for, base):
-    assert client_for("admin").delete(f"/api/products/{base['prods'][0].id}/").status_code == 405
+    assert client_for("leader").delete(f"/api/products/{base['prods'][0].id}/").status_code == 405
 
 
 @pytest.mark.parametrize("role,expected", [("admin", 200), ("leader", 403), ("assistant", 403), ("sales", 403), ("finance", 403)])
@@ -175,11 +179,16 @@ def _perf(**kw):
     return Performance.objects.create(**d)
 
 
-@pytest.mark.parametrize("role,see_amount", [("admin", True), ("leader", True), ("assistant", True), ("finance", True), ("sales", False)])
-def test_performance_amount_field_level(role, see_amount, client_for, users):
+# V2.1：财务无金额（D5）；管理员无业绩业务数据
+@pytest.mark.parametrize("role,count,see_amount", [("admin", 0, False), ("leader", 1, True), ("assistant", 1, True), ("finance", 1, False), ("sales", 1, False)])
+def test_performance_amount_field_level(role, count, see_amount, client_for, users):
     _perf(sales_owner=users["sales"])
-    rows = client_for(role).get("/api/performances/").json()
-    assert len(rows) == 1
+    r = client_for(role).get("/api/performances/")
+    if role == "admin":
+        assert r.status_code == 403
+        return
+    rows = r.json()
+    assert len(rows) == count
     assert ("internal_amount" in rows[0]) is see_amount
 
 
@@ -230,7 +239,8 @@ def test_case_release_rejects_unconfirmed_or_unpublishable(client_for):
         assert r.status_code == 400 and r.json()["code"] == "not_publishable"
 
 
-@pytest.mark.parametrize("role,expected", [("admin", 201), ("leader", 201), ("assistant", 201), ("sales", 403), ("finance", 403)])
+# V2.1：销售可基于已批准公开的案例生成安全 PDF（服务端白名单）；管理员、财务不可
+@pytest.mark.parametrize("role,expected", [("admin", 403), ("leader", 201), ("assistant", 201), ("sales", 201), ("finance", 403)])
 def test_case_release_write_matrix(role, expected, client_for):
     p = _perf()
     assert client_for(role).post("/api/case-releases/", {"performance_ids": [p.id]}, format="json").status_code == expected
