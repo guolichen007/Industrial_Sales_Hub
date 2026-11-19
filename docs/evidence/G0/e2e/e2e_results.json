@@ -1,0 +1,117 @@
+[
+ {
+  "name": "商务助理可见报价中心与产品库",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "取消显示参数后状态由服务端回写",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "报价合计由后端 Decimal 计算",
+  "pass": true,
+  "detail": "¥ 147,691.00"
+ },
+ {
+  "name": "生成后版本冻结（输入框禁用）",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "显示 PDF 与快照哈希",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "PDF 下载",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "创建 V2 草稿",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "销售看不到报价中心/产品库菜单",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "销售可建无客户项目",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "项目关联多个参与方",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "销售无执行进展按钮",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "销售直接调用报价 API 被拒(403)",
+  "pass": true,
+  "detail": "403"
+ },
+ {
+  "name": "销售直接访问报价页显示无权",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "订单确认后项目进入执行并生成节点",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "业绩台账出现订单业绩",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "案例预览不含金额",
+  "pass": true,
+  "detail": "滨海煤码头堆取料机改造\n2026 · 华东 · 港口 · 斗轮机\n供货产品：—\n\n为沿海码头斗轮机配套集中润滑与安全制动设备。"
+ },
+ {
+  "name": "财务无报价中心",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "销售可见执行进度（技术资料确认 已完成）",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "销售执行页无金额",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "销售请求财务 API 被拒",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "销售项目关联接口不含金额字段",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "移动端无页面级横向溢出",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "name": "浏览器无 JS 运行错误",
+  "pass": true,
+  "detail": "Failed to load resource: the server responded with a status of 403 (Forbidden); Failed to load resource: the server responded with a status of 403 (Forbidden); Failed to load resource: the server responded with a status of 403 (Forbidden); Failed to load resource: the server responded with a status of 403 (Forbidden); Failed to load resource: the server responded with a status of 403 (Forbidden)"
+ }
+]
