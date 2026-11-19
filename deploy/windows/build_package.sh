@@ -21,7 +21,12 @@ VERSION=$(sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' backend/config/settings.py)
 NAME="Industrial_Sales_Hub_${VERSION}_LAN_Windows_x64"
 STAGE="$OUT/stage/$NAME"
 mkdir -p "$OUT" "$CACHE"
-rm -rf "$OUT/stage"; mkdir -p "$STAGE"
+# 可续跑：同一提交的阶段标记存在则跳过（构建机网络慢时分段执行）；提交变化则全部重来
+MARK="$OUT/.marks-$SHA"
+if [[ ! -d "$MARK" ]]; then rm -rf "$OUT/stage" "$OUT"/.marks-*; mkdir -p "$MARK"; fi
+mkdir -p "$STAGE"
+done_() { touch "$MARK/$1"; }
+has() { [[ -f "$MARK/$1" ]]; }
 
 PY_VER=3.12.10
 PG_VER=16.16-1
@@ -67,23 +72,30 @@ elif [[ "${ISH_SKIP_AUTHENTICODE:-0}" != "1" ]]; then
   echo "缺少 signify，无法校验 vc_redist 签名（pip install signify，或设置 ISH_SKIP_AUTHENTICODE=1 并在报告中注明）" >&2; exit 4
 fi
 
+if ! has src; then
 echo "== 源码（git archive $SHA）"
 mkdir -p "$STAGE/app"
 git archive --format=tar HEAD backend frontend | tar -x -C "$STAGE/app"
 rm -rf "$STAGE/app/backend/tests"   # 测试不进入正式包
+done_ src; fi
 
+if ! has fe; then
 echo "== 前端构建"
 FE_BUILD="$OUT/fe-build"
-rm -rf "$FE_BUILD"; mkdir -p "$FE_BUILD"
+mkdir -p "$FE_BUILD"
+rm -rf "$FE_BUILD/frontend/src" "$FE_BUILD/frontend/dist"
 git archive --format=tar HEAD frontend | tar -x -C "$FE_BUILD"
-( cd "$FE_BUILD/frontend" && npm ci --no-audit --no-fund --loglevel=error && npm run build >/dev/null )
+( cd "$FE_BUILD/frontend" && { [[ -d node_modules ]] || npm ci --no-audit --no-fund --loglevel=error; } && npm run build >/dev/null )
 rm -rf "$STAGE/app/frontend"
 mkdir -p "$STAGE/app/frontend"
 cp -r "$FE_BUILD/frontend/dist" "$STAGE/app/frontend/dist"
 if grep -rIl -E "https?://(cdn|fonts\.googleapis|unpkg|jsdelivr)" "$STAGE/app/frontend/dist" >/dev/null; then echo "前端包含外部 CDN 引用" >&2; exit 5; fi
+done_ fe; fi
 
-echo "== Python 运行时"
 PYDIR="$STAGE/runtime/python"
+SITE="$PYDIR/Lib/site-packages"
+if ! has py; then
+echo "== Python 运行时"
 mkdir -p "$PYDIR"
 unzip -q "$CACHE/python-$PY_VER-embed-amd64.zip" -d "$PYDIR"
 # 嵌入式 Python：启用 site-packages 与应用目录
@@ -100,7 +112,6 @@ WHEELS="$CACHE/wheels"
 mkdir -p "$WHEELS"
 grep -v -E "^(pytest|gunicorn)" backend/requirements.txt | sed 's/#.*//' | grep -v '^\s*$' > "$OUT/req-runtime.txt"
 pip download --only-binary=:all: --platform win_amd64 --python-version 3.12 --implementation cp -d "$WHEELS" -r "$OUT/req-runtime.txt" -q
-SITE="$PYDIR/Lib/site-packages"
 mkdir -p "$SITE"
 python3 - "$WHEELS" "$SITE" "$OUT/req-runtime.txt" <<'PY'
 import re, sys, zipfile
@@ -118,13 +129,16 @@ for w in sorted(names):
         z.extractall(site)
     print("  安装", w.name)
 PY
+done_ py; fi
 
+if ! has pg; then
 echo "== PostgreSQL（裁剪 pgAdmin/StackBuilder/文档/头文件）"
 unzip -q "$CACHE/postgresql-$PG_VER-windows-x64-binaries.zip" -d "$STAGE/runtime" \
   -x "pgsql/pgAdmin/*" "pgsql/StackBuilder/*" "pgsql/doc/*" "pgsql/include/*" "pgsql/symbols/*" "pgsql/bin/wx*" "pgsql/bin/stackbuilder*"
 mkdir -p "$STAGE/runtime/winsw"
 cp "$CACHE/WinSW-x64.exe" "$STAGE/runtime/winsw/"
 cp "$CACHE/vc_redist.x64.exe" "$STAGE/runtime/"
+done_ pg; fi
 
 echo "== 脚本、配置模板、许可"
 cp deploy/windows/*.bat "$STAGE/"
