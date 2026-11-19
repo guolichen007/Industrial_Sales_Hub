@@ -28,25 +28,33 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 }
 export const useToast = () => useContext(ToastCtx);
 
-/** 加载数据：返回 [data, reload, loading, error] */
-export function useLoad<T>(fn: () => Promise<T>, deps: unknown[]): [T | undefined, () => void, boolean, string] {
+/** 加载数据：返回 [data, reload, loading, error]。pollMs>0 时在页面可见期间定时刷新（执行进度 15–30 秒）。 */
+export function useLoad<T>(fn: () => Promise<T>, deps: unknown[], pollMs = 0): [T | undefined, () => void, boolean, string, number] {
   const [data, setData] = useState<T>();
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [tick, setTick] = useState(0);
+  const [status, setStatus] = useState(0);
+  useEffect(() => {
+    if (!pollMs) return;
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") setTick((x) => x + 1);
+    }, pollMs);
+    return () => clearInterval(t);
+  }, [pollMs]);
   useEffect(() => {
     let alive = true;
     setLoading(true);
     fn()
-      .then((d) => alive && (setData(d), setErr("")))
-      .catch((e) => alive && setErr(e instanceof Error ? e.message : String(e)))
+      .then((d) => alive && (setData(d), setErr(""), setStatus(200)))
+      .catch((e) => alive && (setErr(e instanceof Error ? e.message : String(e)), setStatus(e instanceof ApiError ? e.status : -1)))
       .finally(() => alive && setLoading(false));
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, tick]);
-  return [data, () => setTick((t) => t + 1), loading, err];
+  return [data, () => setTick((t) => t + 1), loading, err, status];
 }
 
 export function PageHead({ k, title, sub, children }: { k: string; title: string; sub?: string; children?: ReactNode }) {
@@ -105,8 +113,25 @@ export function Field({ label, children, full, err, hint }: { label: string; chi
   );
 }
 
-export function Loading({ err }: { err?: string }) {
+export function Loading({ err, status }: { err?: string; status?: number }) {
+  if (status === 403) return <div className="loading"><div className="warnnote">当前角色无权查看此内容。</div></div>;
+  if (status === 404) return <div className="loading"><div className="warnnote">记录不存在，或不在您的可见范围内。</div></div>;
   return <div className="loading">{err ? <span className="err">{err}</span> : "加载中…"}</div>;
+}
+
+/** 防重复提交：busy 期间按钮禁用 */
+export function useBusy() {
+  const [busy, setBusy] = useState(false);
+  const run = useCallback(async (fn: () => Promise<unknown>) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await fn();
+    } finally {
+      setBusy(false);
+    }
+  }, [busy]);
+  return [busy, run] as const;
 }
 
 export function Empty({ text = "暂无数据" }: { text?: string }) {

@@ -16,6 +16,41 @@ function cookie(name: string): string {
   return m ? decodeURIComponent(m[1]) : "";
 }
 
+// ---- 连接状态（侧栏显示“服务器连接正常/已断开/维护中”） ----
+type ConnState = { online: boolean; maintenance: boolean; checkedAt: number };
+let conn: ConnState = { online: true, maintenance: false, checkedAt: 0 };
+const listeners = new Set<(c: ConnState) => void>();
+function emit() {
+  listeners.forEach((l) => l(conn));
+}
+export function setOnline(v: boolean) {
+  if (conn.online !== v) {
+    conn = { ...conn, online: v, checkedAt: Date.now() };
+    emit();
+  }
+}
+export function setMaintenance(v: boolean) {
+  if (conn.maintenance !== v) {
+    conn = { ...conn, maintenance: v };
+    emit();
+  }
+}
+export function onConn(l: (c: ConnState) => void) {
+  listeners.add(l);
+  l(conn);
+  return () => listeners.delete(l);
+}
+export async function pingServer() {
+  try {
+    const r = await fetch("/healthz", { cache: "no-store" });
+    const d = await r.json();
+    setOnline(r.ok);
+    setMaintenance(!!d.maintenance);
+  } catch {
+    setOnline(false);
+  }
+}
+
 export async function ensureCsrf() {
   if (!cookie("csrftoken")) await fetch("/api/auth/csrf/", { credentials: "same-origin" });
 }
@@ -35,11 +70,22 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     headers["Content-Type"] = "application/json";
     body = JSON.stringify(opts.body);
   }
-  const res = await fetch("/api" + path, { method, headers, body, credentials: "same-origin" });
+  let res: Response;
+  try {
+    res = await fetch("/api" + path, { method, headers, body, credentials: "same-origin" });
+  } catch {
+    setOnline(false);
+    throw new ApiError(0, "offline", "无法连接服务器：请检查局域网连接，或联系管理员确认系统服务已启动。");
+  }
+  setOnline(true);
   if (res.status === 204) return undefined as T;
   const ct = res.headers.get("content-type") || "";
   const data = ct.includes("json") ? await res.json() : await res.text();
   if (!res.ok) {
+    if (res.status === 403 && data && typeof data === "object" && data.code === "not_authenticated" && !path.startsWith("/auth/")) {
+      window.dispatchEvent(new Event("ish:unauthorized"));
+    }
+    if (res.status === 503 && data && data.code === "maintenance") setMaintenance(true);
     if (data && typeof data === "object") throw new ApiError(res.status, data.code || "error", data.message || "请求失败", data.field_errors || {});
     throw new ApiError(res.status, "error", `请求失败（${res.status}）`);
   }

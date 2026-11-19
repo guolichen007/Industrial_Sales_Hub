@@ -230,3 +230,5 @@ main{margin-left:72px}
 .nav a.navitem.active{background:#ffffff15;color:#fff;box-shadow:inset 3px 0 0 #32c4b7}
 .nav a.navitem:hover:not(.active){background:#ffffff0a;color:#fff}
 @media(max-width:750px){.nav a.navitem{justify-content:center;padding:13px 4px}.nav a.navitem .text{display:none}.lineedit{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:750px){.detailbanner{padding:18px}.detailbanner h2{font-size:19px}.kv{grid-template-columns:90px minmax(0,1fr)}.kv span{overflow-wrap:anywhere}.actions{flex-wrap:wrap}.tabbar{overflow-x:auto}}
+.tabbar button{white-space:nowrap}

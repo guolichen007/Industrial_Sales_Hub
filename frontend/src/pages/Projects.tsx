@@ -18,7 +18,9 @@ export function ProjectForm({ initial, onClose, onSaved }: { initial?: any; onCl
   const save = async () => {
     setBusy(true);
     try {
-      const body = { ...f.v, sales_owner: f.v.sales_owner || null };
+      const body: any = { ...f.v, sales_owner: f.v.sales_owner || null };
+      if (!can("project.see_scale_note")) delete body.expected_amount_note;
+      if (me!.role === "SALES") delete body.sales_owner;
       const p = initial ? await patch(`/projects/${initial.id}/`, body) : await post("/projects/", body);
       notify(initial ? "项目已更新" : `项目 ${p.code} 已创建，可继续关联参与方`);
       onSaved(p);
@@ -39,16 +41,16 @@ export function ProjectForm({ initial, onClose, onSaved }: { initial?: any; onCl
         <Field label="区域"><input className="input" {...f.bind("region")} /></Field>
         <Field label="项目地点"><input className="input" {...f.bind("location")} /></Field>
         <Field label="投资方（文字）"><input className="input" {...f.bind("investor")} /></Field>
-        <Field label="售前阶段">
-          <select className="select" {...f.bind("presale_phase")}>{PRESALE_PHASES.map((x) => <option key={x}>{x}</option>)}</select>
+        <Field label="售前阶段" hint={me!.role === "SALES" ? "“成交”由合同/订单确认自动产生" : undefined}>
+          <select className="select" {...f.bind("presale_phase")}>{PRESALE_PHASES.filter((x) => me!.role !== "SALES" || x !== "成交" || initial?.presale_phase === "成交").map((x) => <option key={x}>{x}</option>)}</select>
         </Field>
         <Field label="销售负责人" hint={me!.role === "SALES" ? "销售不能变更负责人" : undefined}>
-          <select className="select" {...f.bind("sales_owner")} disabled={me!.role === "SALES" && !!initial}>
+          <select className="select" {...f.bind("sales_owner")} disabled={me!.role === "SALES"}>
             <option value="">（未指定）</option>
             {(users || []).filter((u) => u.role === "SALES" || u.role === "LEADER").map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
           </select>
         </Field>
-        <Field label="预计规模（文字，选填）" hint={can("quote.access") ? undefined : "仅描述，不录入金额"}><input className="input" {...f.bind("expected_amount_note")} /></Field>
+        {can("project.see_scale_note") && <Field label="预计规模（内部，仅商务/负责人可见）"><input className="input" {...f.bind("expected_amount_note")} /></Field>}
         <Field label="项目说明" full><textarea className="input textarea" {...f.bind("description")} /></Field>
       </div>
     </Modal>
@@ -64,7 +66,7 @@ export default function Projects() {
   const [exec, setExec] = useState("");
   const [mine, setMine] = useState(false);
   const [creating, setCreating] = useState(sp.get("new") === "1");
-  const [list, , loading, err] = useLoad(() => get<any[]>("/projects/" + qs({ q, presale_phase: phase, execution_phase: exec, mine: mine ? 1 : "" })), [q, phase, exec, mine]);
+  const [list, , loading, err] = useLoad(() => get<any[]>("/projects/" + qs({ q, presale_phase: phase, execution_phase: exec, mine: mine ? 1 : "" })), [q, phase, exec, mine], 30000);
   useEffect(() => {
     if (sp.get("new")) setSp({}, { replace: true });
   }, [sp, setSp]);
@@ -83,7 +85,7 @@ export default function Projects() {
         {loading && !list ? <Loading err={err} /> : (
           <div className="tablewrap">
             <table className="data">
-              <thead><tr><th>项目 / 编号</th><th>参与方</th><th>行业 · 主机</th><th>区域</th><th>售前</th><th>执行</th><th>进度</th><th>销售</th>{can("quote.access") && <th>报价</th>}<th>更新</th></tr></thead>
+              <thead><tr><th>项目 / 编号</th><th>参与方</th><th>行业 · 主机</th><th>区域</th><th>售前</th><th>执行</th><th>进度</th><th>销售</th><th>权限</th><th>更新</th></tr></thead>
               <tbody>
                 {(list || []).map((p) => (
                   <tr key={p.id}>
@@ -95,7 +97,7 @@ export default function Projects() {
                     <td><Chip s={p.execution_phase} /></td>
                     <td className="micro">{p.milestone_total ? `${p.milestone_done}/${p.milestone_total}` : "—"}</td>
                     <td>{p.sales_owner_name || "—"}</td>
-                    {can("quote.access") && <td>{p.quote_count}</td>}
+                    <td>{p.can_edit ? <span className="chip">可编辑</span> : <span className="chip gray">只读</span>}</td>
                     <td className="micro">{new Date(p.updated_at).toLocaleDateString("zh-CN")}</td>
                   </tr>
                 ))}

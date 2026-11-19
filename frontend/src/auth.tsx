@@ -8,7 +8,8 @@ export type Me = {
   role: "ADMIN" | "LEADER" | "ASSISTANT" | "SALES" | "FINANCE";
   role_label: string;
   caps: string[];
-  flags: { sales_quote_summary: boolean; performance_confirm_mode: string; sales_see_all_projects: boolean };
+  flags: { performance_confirm_mode: string; project_visibility: string; mode: string; https: boolean };
+  version: string;
 };
 
 type Ctx = { me: Me | null; loading: boolean; can: (cap: string) => boolean; login: (u: string, p: string) => Promise<void>; logout: () => Promise<void> };
@@ -29,8 +30,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setMe(await post<Me>("/auth/login/", { username, password }));
   }, []);
   const logout = useCallback(async () => {
-    await post("/auth/logout/");
-    setMe(null);
+    try {
+      await post("/auth/logout/");
+    } finally {
+      setMe(null);
+    }
+  }, []);
+  // 会话失效（被停用/改角色/超时）时回到登录页
+  useEffect(() => {
+    const h = () => setMe(null);
+    window.addEventListener("ish:unauthorized", h);
+    return () => window.removeEventListener("ish:unauthorized", h);
   }, []);
   const can = useCallback((cap: string) => !!me?.caps.includes(cap), [me]);
   return <AuthCtx.Provider value={{ me, loading, can, login, logout }}>{children}</AuthCtx.Provider>;

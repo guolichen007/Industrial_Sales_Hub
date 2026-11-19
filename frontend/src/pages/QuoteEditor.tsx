@@ -1,18 +1,23 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { del, dt, get, money, patch, post, qs } from "../api";
+import { ApiError, del, dt, get, money, patch, post, qs } from "../api";
+import { useAuth } from "../auth";
 import { QUOTE_NEXT, QUOTE_STATUS } from "../options";
 import { Chip, Field, Loading, Modal, PageHead, useLoad, useToast } from "../ui";
 
-function LineEditor({ line, revId, editable, onChanged }: { line: any; revId: number; editable: boolean; onChanged: (rev: any) => void }) {
+function LineEditor({ line, rev, editable, onChanged, onSaveProduct }: { line: any; rev: any; editable: boolean; onChanged: (rev: any) => void; onSaveProduct: (line: any) => void }) {
   const { fail } = useToast();
-  const [v, setV] = useState({ qty: line.qty, unit_price: line.unit_price, tax_rate: line.tax_rate, discount_rate: line.discount_rate, remark: line.remark, unit: line.unit });
-  useEffect(() => setV({ qty: line.qty, unit_price: line.unit_price, tax_rate: line.tax_rate, discount_rate: line.discount_rate, remark: line.remark, unit: line.unit }), [line]);
+  const { can } = useAuth();
+  const revId = rev.id;
+  const pick = (l: any) => ({ qty: l.qty, multiplier: l.multiplier, unit_price: l.unit_price, tax_rate: l.tax_rate, discount_rate: l.discount_rate, remark: l.remark, unit: l.unit });
+  const [v, setV] = useState(pick(line));
+  useEffect(() => setV(pick(line)), [line]);
   const save = async (body: any) => {
     try {
-      onChanged(await patch(`/quote-revisions/${revId}/lines/${line.id}/`, body));
+      onChanged(await patch(`/quote-revisions/${revId}/lines/${line.id}/`, { ...body, expected_version: rev.lock_version }));
     } catch (e) {
       fail(e);
+      if (e instanceof ApiError && e.code === "stale_version") onChanged(await get(`/quote-revisions/${revId}/`));
     }
   };
   const commit = (k: keyof typeof v) => {
@@ -23,6 +28,7 @@ function LineEditor({ line, revId, editable, onChanged }: { line: any; revId: nu
     save({ visible_param_keys: cur.includes(key) ? cur.filter((x) => x !== key) : [...cur, key] });
   };
   const remove = async () => {
+    if (!confirm(`删除报价行「${line.name}」？`)) return;
     try {
       onChanged(await del(`/quote-revisions/${revId}/lines/${line.id}/`));
     } catch (e) {
@@ -41,6 +47,7 @@ function LineEditor({ line, revId, editable, onChanged }: { line: any; revId: nu
         <div><b>{line.name}</b> <span className="sub">{line.model}{line.brand && ` · ${line.brand}`}</span></div>
         <div className="rowactions">
           <span className="num" style={{ fontWeight: 700 }}>{money(line.line_gross)}</span>
+          {!line.product && can("product.write") && <button className="btn mini" onClick={() => onSaveProduct(line)} title="把这条手工新增的产品存入产品库，不影响本报价">存入产品库</button>}
           {editable && <button className="btn mini" onClick={remove}>删除</button>}
         </div>
       </div>
@@ -52,10 +59,11 @@ function LineEditor({ line, revId, editable, onChanged }: { line: any; revId: nu
           ))}
         </div>
       )}
-      <div className="lineedit">
+      <div className="lineedit" style={{ gridTemplateColumns: "repeat(6,minmax(0,1fr))" }}>
         {inp("qty", "数量")}
+        {inp("multiplier", "乘数", "如每盘米数")}
         {inp("unit", "单位")}
-        {inp("unit_price", "未税单价")}
+        {inp("unit_price", rev.price_basis === "GROSS" ? "含税单价" : "未税单价")}
         {inp("tax_rate", "税率", "0.13=13%")}
         {inp("discount_rate", "折扣率", "0.05=5%")}
       </div>
@@ -112,14 +120,29 @@ export default function QuoteEditor() {
   const editable = rev.status === "DRAFT";
   const saveRev = async (body: any) => {
     try {
-      setRev(await patch(`/quote-revisions/${rev.id}/`, body));
+      setRev(await patch(`/quote-revisions/${rev.id}/`, { ...body, expected_version: rev.lock_version }));
+    } catch (e) {
+      fail(e);
+      if (e instanceof ApiError && e.code === "stale_version") setRev(await get(`/quote-revisions/${rev.id}/`));
+    }
+  };
+  const saveAsProduct = async (line: any) => {
+    const sku = prompt(`存入产品库：请输入唯一型号编码（建议与型号一致）`, line.model && line.model !== "—" ? line.model : "");
+    if (!sku) return;
+    const cats = await get<any[]>("/product-categories/");
+    const name = prompt(`类别（可选：${cats.map((c) => c.name).join("、")}）`, cats[0]?.name || "");
+    const cat = cats.find((c) => c.name === name);
+    if (!cat) return fail(new Error("请输入已有的类别名称"));
+    try {
+      await post(`/quote-revisions/${rev.id}/save-product/`, { line: line.id, sku, category: cat.id });
+      notify(`已存入产品库：${sku}（本报价不受影响）`);
     } catch (e) {
       fail(e);
     }
   };
   const addLine = async (pid: number) => {
     try {
-      setRev(await post(`/quote-revisions/${rev.id}/lines/`, { product: pid, qty: "1" }));
+      setRev(await post(`/quote-revisions/${rev.id}/lines/`, { product: pid, qty: "1", expected_version: rev.lock_version }));
       setPicking(false);
       notify("已加入产品，可调整数量与价格");
     } catch (e) {
@@ -130,7 +153,7 @@ export default function QuoteEditor() {
     const name = prompt("非标/临时项目名称（如：安装调试费）");
     if (!name) return;
     try {
-      setRev(await post(`/quote-revisions/${rev.id}/lines/`, { name, model: "—", qty: "1", unit_price: "0", unit: "项" }));
+      setRev(await post(`/quote-revisions/${rev.id}/lines/`, { name, model: "—", qty: "1", unit_price: "0", unit: "项", expected_version: rev.lock_version }));
     } catch (e) {
       fail(e);
     }
@@ -180,7 +203,7 @@ export default function QuoteEditor() {
         ))}
         {!quote.revisions.some((r: any) => r.status === "DRAFT") && quote.status !== "CANCELLED" && <button className="btn mini soft" onClick={newVersion}>+ 新版本</button>}
         <Chip s={quote.status_label} />
-        <span className="micro">报价状态仅记录商务事实，不等于业绩；业绩需经合同/订单确认。</span>
+        <span className="micro">单价口径：{rev.price_basis === "GROSS" ? "含税单价" : "未税单价"}（出具主体配置）。报价状态仅记录商务事实，不等于业绩。</span>
       </div>
       <div className="steps">
         <span className="step">① 主体与客户 ✓</span>
@@ -201,7 +224,7 @@ export default function QuoteEditor() {
               <h2>报价明细（{rev.lines.length} 行）</h2>
               {editable && <div className="rowactions"><button className="btn mini" onClick={addCustom}>+ 非标项</button><button className="btn mini primary" onClick={() => setPicking(true)}>+ 选择产品</button></div>}
             </div>
-            {rev.lines.map((l: any) => <LineEditor key={l.id} line={l} revId={rev.id} editable={editable} onChanged={setRev} />)}
+            {rev.lines.map((l: any) => <LineEditor key={l.id} line={l} rev={rev} editable={editable} onChanged={setRev} onSaveProduct={saveAsProduct} />)}
             {rev.lines.length === 0 && <div className="empty">尚未添加产品。点击“选择产品”从产品库加入；加入后价格与参数与产品库解耦。</div>}
             <div className="totals">
               <span>未税合计</span><b className="num">{money(rev.total_net)}</b>
@@ -212,7 +235,7 @@ export default function QuoteEditor() {
           </div>
         </div>
         <div className="grid" style={{ alignContent: "start" }}>
-          <div className="card cardpad">
+          <div className="card cardpad" key={`terms-${rev.id}-${rev.status}`}>
             <div className="sectionhead"><h2>商务条款</h2></div>
             <div className="fieldset" style={{ gridTemplateColumns: "1fr 1fr" }}>
               <Field label="报价日期"><input className="input" type="date" disabled={!editable} defaultValue={rev.quote_date} onBlur={(e) => e.target.value !== rev.quote_date && saveRev({ quote_date: e.target.value })} /></Field>
@@ -221,6 +244,9 @@ export default function QuoteEditor() {
               <Field label="付款方式" full><input className="input" disabled={!editable} defaultValue={rev.payment_terms} onBlur={(e) => e.target.value !== rev.payment_terms && saveRev({ payment_terms: e.target.value })} placeholder="例如：预付 30%，发货前付清" /></Field>
               <Field label="其他条款（每行一条）" full><textarea className="input textarea" style={{ minHeight: 110 }} disabled={!editable} defaultValue={rev.terms} onBlur={(e) => e.target.value !== rev.terms && saveRev({ terms: e.target.value })} /></Field>
               <Field label="备注" full><textarea className="input textarea" disabled={!editable} defaultValue={rev.remark} onBlur={(e) => e.target.value !== rev.remark && saveRev({ remark: e.target.value })} /></Field>
+              <Field label="参考铜价（手工录入，仅印刷）" full><input className="input" disabled={!editable} defaultValue={rev.ref_copper_price} placeholder="例如：1# 电解铜 78,500 元/吨" onBlur={(e) => e.target.value !== rev.ref_copper_price && saveRev({ ref_copper_price: e.target.value })} /></Field>
+              <Field label="参考汇率"><input className="input" disabled={!editable} defaultValue={rev.ref_exchange_rate} placeholder="例如：USD/CNY 7.12" onBlur={(e) => e.target.value !== rev.ref_exchange_rate && saveRev({ ref_exchange_rate: e.target.value })} /></Field>
+              <Field label="参考值有效期至"><input className="input" type="date" disabled={!editable} defaultValue={rev.ref_valid_until || ""} onBlur={(e) => e.target.value !== (rev.ref_valid_until || "") && saveRev({ ref_valid_until: e.target.value || null })} /></Field>
               <label className="chk formfield full"><input type="checkbox" disabled={!editable} checked={rev.show_upper_amount} onChange={(e) => saveRev({ show_upper_amount: e.target.checked })} />报价单显示大写金额</label>
             </div>
           </div>

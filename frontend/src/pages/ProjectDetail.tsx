@@ -76,7 +76,7 @@ function UpdateModal({ projectId, stream, onClose, onSaved }: { projectId: numbe
 function MilestoneRow({ m, projectId, editable, onSaved }: { m: any; projectId: number; editable: boolean; onSaved: () => void }) {
   const { notify, fail } = useToast();
   const [edit, setEdit] = useState(false);
-  const [v, setV] = useState({ state: m.state, owner_name: m.owner_name, planned_date: m.planned_date || "", actual_date: m.actual_date || "", note: m.note });
+  const [v, setV] = useState({ state: m.state, owner_name: m.owner_name, planned_date: m.planned_date || "", actual_date: m.actual_date || "", note: m.note, delay_reason: m.delay_reason || "" });
   const save = async () => {
     try {
       await patch(`/projects/${projectId}/milestones/${m.id}/`, { ...v, planned_date: v.planned_date || null, actual_date: v.actual_date || null });
@@ -95,7 +95,7 @@ function MilestoneRow({ m, projectId, editable, onSaved }: { m: any; projectId: 
         <td>{m.owner_name || "—"}</td>
         <td>{dt(m.planned_date)}</td>
         <td>{dt(m.actual_date)}</td>
-        <td style={{ whiteSpace: "normal" }} className="micro">{m.note || ""}{m.updated_by_name && <div>更新：{m.updated_by_name}</div>}</td>
+        <td style={{ whiteSpace: "normal" }} className="micro">{m.state === "DELAYED" && m.delay_reason && <div style={{ color: "#b55c5c" }}>延期：{m.delay_reason}</div>}{m.note || ""}{m.updated_by_name && <div>更新：{m.updated_by_name}</div>}</td>
         <td>{editable && <button className="btn mini" onClick={() => setEdit(true)}>更新</button>}</td>
       </tr>
     );
@@ -106,51 +106,12 @@ function MilestoneRow({ m, projectId, editable, onSaved }: { m: any; projectId: 
       <td><input className="ms-select" style={{ width: 80 }} value={v.owner_name} onChange={(e) => setV({ ...v, owner_name: e.target.value })} /></td>
       <td><input className="ms-select" type="date" value={v.planned_date} onChange={(e) => setV({ ...v, planned_date: e.target.value })} /></td>
       <td><input className="ms-select" type="date" value={v.actual_date} onChange={(e) => setV({ ...v, actual_date: e.target.value })} /></td>
-      <td><input className="ms-select" style={{ width: 180 }} value={v.note} onChange={(e) => setV({ ...v, note: e.target.value })} placeholder="说明" /></td>
-      <td className="rowactions"><button className="btn mini primary" onClick={save}>保存</button><button className="btn mini" onClick={() => setEdit(false)}>取消</button></td>
+      <td>
+        {v.state === "DELAYED" && <input className="ms-select" style={{ width: 180, marginBottom: 4, borderColor: "#e3a9a3" }} value={v.delay_reason} onChange={(e) => setV({ ...v, delay_reason: e.target.value })} placeholder="延期原因（必填）" />}
+        <input className="ms-select" style={{ width: 180 }} value={v.note} onChange={(e) => setV({ ...v, note: e.target.value })} placeholder="说明（销售可见，勿填金额）" />
+      </td>
+      <td className="rowactions"><button className="btn mini primary" disabled={v.state === "DELAYED" && !v.delay_reason.trim()} onClick={save}>保存</button><button className="btn mini" onClick={() => setEdit(false)}>取消</button></td>
     </tr>
-  );
-}
-
-function FinancePanel({ projectId }: { projectId: number }) {
-  const { notify, fail } = useToast();
-  const [d, reload] = useLoad(() => get(`/projects/${projectId}/finance/`), [projectId]);
-  const f = useForm({ kind: "RECEIPT", amount: "", happened_on: new Date().toISOString().slice(0, 10), note: "" });
-  const add = async () => {
-    try {
-      await post(`/projects/${projectId}/finance/`, f.v);
-      notify("已登记");
-      f.setV({ ...f.v, amount: "", note: "" });
-      reload();
-    } catch (e) {
-      fail(e);
-    }
-  };
-  if (!d) return <Loading />;
-  return (
-    <div className="card cardpad">
-      <div className="sectionhead"><h2>财务信息</h2><span className="chip amber">仅负责人/财务可见 · 销售接口不返回</span></div>
-      <div className="mini-cells">
-        <div className="mini"><small>合同金额</small><strong>{money(d.sums.CONTRACT)}</strong></div>
-        <div className="mini"><small>已开票</small><strong>{money(d.sums.INVOICE)}</strong></div>
-        <div className="mini"><small>已回款</small><strong>{money(d.sums.RECEIPT)}</strong></div>
-      </div>
-      <div className="inline-form" style={{ marginBottom: 14 }}>
-        <Field label="类型"><select className="select" {...f.bind("kind")}><option value="CONTRACT">合同金额</option><option value="INVOICE">开票</option><option value="RECEIPT">回款</option></select></Field>
-        <Field label="金额"><input className="input" {...f.bind("amount")} inputMode="decimal" /></Field>
-        <Field label="日期"><input className="input" type="date" {...f.bind("happened_on")} /></Field>
-        <Field label="说明"><input className="input" {...f.bind("note")} /></Field>
-        <button className="btn primary" disabled={!f.v.amount} onClick={add}>登记</button>
-      </div>
-      <table className="data">
-        <thead><tr><th>日期</th><th>类型</th><th className="right">金额</th><th>说明</th><th>登记人</th></tr></thead>
-        <tbody>
-          {d.entries.map((e: any) => <tr key={e.id}><td>{e.happened_on}</td><td>{({ CONTRACT: "合同", INVOICE: "开票", RECEIPT: "回款" } as any)[e.kind]}</td><td className="right num">{money(e.amount)}</td><td>{e.note}</td><td>{e.created_by_name}</td></tr>)}
-          {d.entries.length === 0 && <tr><td colSpan={5} className="empty-cell">暂无记录</td></tr>}
-        </tbody>
-      </table>
-      <div style={{ marginTop: 14 }}><Attachments ownerType="finance" ownerId={projectId} canUpload title="财务凭证附件" /></div>
-    </div>
   );
 }
 
@@ -160,19 +121,30 @@ export default function ProjectDetail() {
   const nav = useNavigate();
   const { can } = useAuth();
   const { notify, fail } = useToast();
-  const [p, reload, loading, err] = useLoad(() => get(`/projects/${pid}/`), [pid]);
-  const [updates, reloadUpdates] = useLoad(() => get<any[]>(`/projects/${pid}/updates/`), [pid]);
+  const [p, reload, loading, err, status] = useLoad(() => get(`/projects/${pid}/`), [pid], 30000);
+  const [updates, reloadUpdates] = useLoad(() => get<any[]>(`/projects/${pid}/updates/`), [pid], 30000);
   const [related, reloadRelated] = useLoad(() => get(`/projects/${pid}/related/`), [pid]);
   const [tab, setTab] = useState("overview");
   const [modal, setModal] = useState<string>("");
-  if (loading && !p) return <Loading err={err} />;
-  if (!p) return <Loading err={err || "项目不存在或无权访问"} />;
+  if (loading && !p) return <Loading err={err} status={status} />;
+  if (!p) return <Loading err={err || "项目不存在或无权访问"} status={status} />;
   const refresh = () => {
     reload();
     reloadUpdates();
     reloadRelated();
   };
   const canExec = can("update.execution.write");
+  const editable = !!p.can_edit;
+  const pauseResume = async (phase: string) => {
+    const note = prompt(phase === "暂停" ? "暂停原因" : "恢复说明") || "";
+    try {
+      await post(`/projects/${pid}/execution-phase/`, { phase, note });
+      notify(`执行阶段已设为「${phase}」`);
+      refresh();
+    } catch (e) {
+      fail(e);
+    }
+  };
   const removeParty = async (party: any) => {
     if (!confirm(`移除参与方「${party.account_name}（${party.party_role}）」？`)) return;
     try {
@@ -193,8 +165,8 @@ export default function ProjectDetail() {
     }
   };
   const done = p.milestones.filter((m: any) => m.state === "DONE" || m.state === "SKIPPED").length;
-  const tabs: [string, string][] = [["overview", "项目全景"], ["presale", "售前跟进"], ["execution", "合同执行"], ["files", "附件"]];
-  if (can("project_finance.access")) tabs.push(["finance", "财务信息"]);
+  const tabs: [string, string][] = [["overview", "项目全景"], ["presale", "售前跟进"], ["execution", "合同执行"]];
+  if (editable) tabs.push(["files", "附件"]);
   return (
     <>
       <div className="detailbanner">
@@ -205,13 +177,14 @@ export default function ProjectDetail() {
           <span className="chip">售前：{p.presale_phase}</span>
           <span className="chip blue">执行：{p.execution_phase}</span>
           <span className="chip gray">销售：{p.sales_owner_name || "未指定"}</span>
+          {!editable && <span className="chip gray">只读（非本人负责/参与）</span>}
           {p.milestones.length > 0 && <span className="chip gray">执行节点 {done}/{p.milestones.length}</span>}
         </div>
       </div>
       <div className="actions" style={{ marginBottom: 14 }}>
         <button className="btn" onClick={() => nav("/projects")}>← 返回列表</button>
-        {can("project.edit") && <button className="btn" onClick={() => setModal("edit")}>编辑项目</button>}
-        {can("update.presale.write") && <button className="btn soft" onClick={() => setModal("PRESALE")}>+ 售前跟进</button>}
+        {editable && <button className="btn" onClick={() => setModal("edit")}>编辑项目</button>}
+        {editable && can("update.presale.write") && <button className="btn soft" onClick={() => setModal("PRESALE")}>+ 售前跟进</button>}
         {canExec && <button className="btn soft" onClick={() => setModal("EXECUTION")}>+ 执行进展</button>}
         {can("quote.access") && <button className="btn primary" onClick={() => nav(`/quotes?new=1&project=${pid}`)}>+ 为此项目报价</button>}
         {can("order.confirm") && <button className="btn dark" onClick={() => setModal("order")}>登记合同/订单</button>}
@@ -222,20 +195,22 @@ export default function ProjectDetail() {
         <div className="split">
           <div className="grid">
             <div className="card cardpad">
-              <div className="sectionhead"><h2>参与方</h2>{can("project.edit") && <button className="btn mini soft" onClick={() => setModal("party")}>+ 关联参与方</button>}</div>
+              <div className="sectionhead"><h2>参与方</h2>{editable && <button className="btn mini soft" onClick={() => setModal("party")}>+ 关联参与方</button>}</div>
               {p.parties.length === 0 ? <div className="warnnote">项目尚未关联客户。项目可独立存在，后续可随时关联多家主机厂、业主或投资方。</div> : (
+                <div className="tablewrap">
                 <table className="data">
                   <thead><tr><th>组织</th><th>身份</th><th>说明</th><th /></tr></thead>
                   <tbody>{p.parties.map((x: any) => (
                     <tr key={x.id}><td><b>{x.account_name}</b>{x.is_primary && <span className="pill" style={{ marginLeft: 6 }}>主要</span>}</td><td><Chip s={x.party_role} cls="blue" /></td><td>{x.note}</td>
-                      <td>{can("project.edit") && <button className="btn mini" onClick={() => removeParty(x)}>移除</button>}</td></tr>
+                      <td>{editable && <button className="btn mini" onClick={() => removeParty(x)}>移除</button>}</td></tr>
                   ))}</tbody>
                 </table>
+                </div>
               )}
             </div>
             <div className="card cardpad">
               <div className="sectionhead"><h2>执行进度</h2><small>{canExec ? "商务/财务维护" : "只读 · 安全摘要"}</small></div>
-              {p.milestones.length === 0 ? <div className="sub">合同/订单确认后自动生成执行节点。{canExec && <button className="btn mini" style={{ marginLeft: 8 }} onClick={initMs}>手动初始化</button>}</div> : (
+              {p.milestones.length === 0 ? <div className="sub">合同/订单确认后自动生成执行节点。</div> : (
                 <div className="progress-rail">
                   {p.milestones.map((m: any) => <div key={m.id} className={"progress-tile " + (m.state === "DONE" ? "done" : m.state === "IN_PROGRESS" || m.state === "DELAYED" ? "current" : "")}>{m.stage}<br />{msLabel(m.state)}</div>)}
                 </div>
@@ -244,6 +219,7 @@ export default function ProjectDetail() {
             {related && (related.quotes.length > 0 || can("quote.access")) && (
               <div className="card cardpad">
                 <div className="sectionhead"><h2>关联报价</h2>{!can("quote.access") && <small>无金额摘要</small>}</div>
+                <div className="tablewrap">
                 <table className="data">
                   <thead><tr><th>报价编号</th><th>接收客户</th><th>出具公司</th><th>状态</th>{can("quote.access") && <th className="right">最新版本含税</th>}</tr></thead>
                   <tbody>
@@ -257,18 +233,21 @@ export default function ProjectDetail() {
                     {related.quotes.length === 0 && <tr><td colSpan={5} className="empty-cell">暂无报价</td></tr>}
                   </tbody>
                 </table>
+                </div>
               </div>
             )}
             {related && related.orders.length > 0 && (
               <div className="card cardpad">
                 <div className="sectionhead"><h2>合同 / 订单确认</h2></div>
+                <div className="tablewrap">
                 <table className="data">
-                  <thead><tr><th>依据</th><th>编号</th><th>出具主体</th><th>状态</th>{can("performance.see_amount") && <th className="right">合同金额</th>}<th>确认人</th></tr></thead>
+                  <thead><tr><th>依据</th><th>编号</th><th>出具主体</th><th>状态</th>{can("order.amount") && <th className="right">合同金额</th>}<th>确认人</th></tr></thead>
                   <tbody>{related.orders.map((o: any) => (
                     <tr key={o.id}><td>{o.basis_label}</td><td>{o.order_ref || "—"}</td><td>{o.legal_entity_name}</td><td><Chip s={o.status_label} /></td>
-                      {can("performance.see_amount") && <td className="right num">{money(o.contract_amount)}</td>}<td>{o.confirmed_by_name || "—"}</td></tr>
+                      {can("order.amount") && <td className="right num">{money(o.contract_amount)}</td>}<td>{o.confirmed_by_name || "—"}</td></tr>
                   ))}</tbody>
                 </table>
+                </div>
               </div>
             )}
           </div>
@@ -281,7 +260,7 @@ export default function ProjectDetail() {
                 <span>主机类型</span><span>{p.machine_type || "—"}</span>
                 <span>区域 / 地点</span><span>{[p.region, p.location].filter(Boolean).join(" · ") || "—"}</span>
                 <span>投资方</span><span>{p.investor || "—"}</span>
-                <span>预计规模</span><span>{p.expected_amount_note || "—"}</span>
+                {"expected_amount_note" in p && <><span>预计规模</span><span>{p.expected_amount_note || "—"}</span></>}
                 <span>销售负责人</span><span>{p.sales_owner_name || "—"}</span>
                 <span>创建时间</span><span>{dt(p.created_at)}</span>
               </div>
@@ -329,7 +308,7 @@ export default function ProjectDetail() {
           </div>
           <div className="card cardpad" style={{ alignSelf: "start" }}>
             {tab === "presale"
-              ? can("update.presale.write") ? <button className="btn primary" onClick={() => setModal("PRESALE")}>+ 记录售前跟进</button> : <div className="sub">当前角色只读</div>
+              ? editable && can("update.presale.write") ? <button className="btn primary" onClick={() => setModal("PRESALE")}>+ 记录售前跟进</button> : <div className="sub">只读：售前跟进由项目负责销售或商务录入</div>
               : canExec ? <button className="btn primary" onClick={() => setModal("EXECUTION")}>+ 记录执行进展</button> : <div className="sub">执行进度由商务/财务维护，销售可随时查看。</div>}
           </div>
         </div>
@@ -337,7 +316,14 @@ export default function ProjectDetail() {
 
       {tab === "execution" && (
         <div className="card cardpad" style={{ marginTop: 18 }}>
-          <div className="sectionhead"><h2>执行节点</h2>{canExec && p.milestones.length === 0 && <button className="btn mini" onClick={initMs}>初始化节点</button>}</div>
+          <div className="sectionhead">
+            <h2>执行节点</h2>
+            <div className="rowactions">
+              {canExec && p.milestones.length > 0 && p.execution_phase !== "暂停" && <button className="btn mini warn" onClick={() => pauseResume("暂停")}>暂停执行</button>}
+              {canExec && p.execution_phase === "暂停" && <button className="btn mini soft" onClick={() => pauseResume("执行中")}>恢复执行</button>}
+              {can("milestone.init") && p.milestones.length === 0 && related?.orders?.some((o: any) => o.status === "CONFIRMED") && <button className="btn mini" onClick={initMs}>补建节点</button>}
+            </div>
+          </div>
           <div className="tablewrap">
             <table className="data">
               <thead><tr><th>节点</th><th>状态</th><th>责任人</th><th>计划完成</th><th>实际完成</th><th>说明</th><th /></tr></thead>
@@ -350,8 +336,7 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      {tab === "files" && <div className="card cardpad"><Attachments ownerType="project" ownerId={pid} canUpload={can("project.edit")} title="项目附件" /></div>}
-      {tab === "finance" && <FinancePanel projectId={pid} />}
+      {tab === "files" && editable && <div className="card cardpad"><Attachments ownerType="project" ownerId={pid} canUpload title="项目附件（仅项目负责/参与人员与商务可见）" /></div>}
 
       {modal === "edit" && <ProjectForm initial={p} onClose={() => setModal("")} onSaved={() => (setModal(""), refresh())} />}
       {modal === "party" && <PartyModal projectId={pid} onClose={() => setModal("")} onSaved={() => (setModal(""), refresh())} />}

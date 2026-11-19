@@ -36,6 +36,7 @@ export function Attachments({ ownerType, ownerId, canUpload, title }: { ownerTyp
         )}
       </div>
       {err ? <div className="sub">{err}</div> : (
+        <div className="tablewrap">
         <table className="data">
           <thead><tr><th>文件</th><th>大小</th><th>上传人</th><th>时间</th><th /></tr></thead>
           <tbody>
@@ -48,6 +49,7 @@ export function Attachments({ ownerType, ownerId, canUpload, title }: { ownerTyp
             {list && list.length === 0 && <tr><td colSpan={5} className="empty-cell">暂无附件（支持 PDF、图片、xlsx、docx、zip，≤20MB）</td></tr>}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

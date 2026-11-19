@@ -17,7 +17,7 @@ function PerfForm({ initial, onClose, onSaved }: { initial?: any; onClose: () =>
   const save = async () => {
     try {
       const body: any = { ...f.v, ...flags, internal_amount: f.v.internal_amount || null };
-      if (!can("performance.see_amount")) delete body.internal_amount;
+      if (!can("performance.see_amount") || initial?.source === "ORDER") delete body.internal_amount;
       if (initial) await patch(`/performances/${initial.id}/`, body);
       else await post("/performances/", body);
       notify(initial ? "已保存" : "已补录，状态为“待核实”，需负责人确认");
@@ -39,7 +39,7 @@ function PerfForm({ initial, onClose, onSaved }: { initial?: any; onClose: () =>
         <Field label="主机厂（内部）"><input className="input" {...f.bind("host_maker")} /></Field>
         <Field label="业主"><input className="input" {...f.bind("owner_org")} /></Field>
         <Field label="投资方（内部）"><input className="input" {...f.bind("investor")} /></Field>
-        {can("performance.see_amount") && <Field label="内部金额" err={f.errs.internal_amount}><input className="input" {...f.bind("internal_amount")} /></Field>}
+        {can("performance.see_amount") && <Field label="内部金额" err={f.errs.internal_amount} hint={initial?.source === "ORDER" ? "以合同/订单为准，不可在此修改" : undefined}><input className="input" {...f.bind("internal_amount")} disabled={initial?.source === "ORDER"} /></Field>}
         <Field label="公开简介（用于对外案例）" full><textarea className="input textarea" {...f.bind("public_summary")} /></Field>
         <Field label="对外展示" full>
           <div className="tagline">
@@ -54,12 +54,12 @@ function PerfForm({ initial, onClose, onSaved }: { initial?: any; onClose: () =>
 }
 
 export default function Performance() {
-  const { can } = useAuth();
+  const { can, me } = useAuth();
   const { notify, fail } = useToast();
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [year, setYear] = useState("");
-  const [list, reload, loading, err] = useLoad(() => get<any[]>("/performances/" + qs({ q, status, year })), [q, status, year]);
+  const [list, reload, loading, err, st] = useLoad(() => get<any[]>("/performances/" + qs({ q, status, year })), [q, status, year]);
   const [stats, reloadStats] = useLoad(() => get("/performances/stats/"), []);
   const [modal, setModal] = useState<any>(null);
   const refresh = () => (reload(), reloadStats());
@@ -81,7 +81,7 @@ export default function Performance() {
   const seeAmt = can("performance.see_amount");
   return (
     <>
-      <PageHead k="PERFORMANCE LEDGER" title="业绩台账" sub={seeAmt ? "订单确认自动生成 + 历史手工补录/导入（待核实→负责人确认）" : "我的业绩（不含内部金额）"}>
+      <PageHead k="PERFORMANCE LEDGER" title="业绩台账" sub={seeAmt ? "订单确认自动生成 + 历史手工补录/导入（待核实→负责人确认）" : me!.role === "SALES" ? "我的业绩（按负责/参与归属授权，不含内部金额）" : "业绩安全视图（不含内部金额）"}>
         {can("import.run") && <button className="btn" onClick={() => setModal("import")}>Excel 导入历史业绩</button>}
         {can("performance.write") && <button className="btn primary" onClick={() => setModal("new")}>+ 手工补录</button>}
       </PageHead>
@@ -99,7 +99,7 @@ export default function Performance() {
         <input className="input" style={{ width: 110 }} placeholder="年份" value={year} onChange={(e) => setYear(e.target.value)} />
       </div>
       <div className="card">
-        {loading && !list ? <Loading err={err} /> : (
+        {loading && !list ? <Loading err={err} status={st} /> : (
           <div className="tablewrap">
             <table className="data">
               <thead><tr><th>业绩名称</th><th>年份</th><th>地区 · 行业</th><th>供货产品</th><th>主机</th><th>来源</th>{seeAmt && <th className="right">内部金额</th>}<th>状态</th><th>对外</th><th /></tr></thead>
@@ -114,6 +114,7 @@ export default function Performance() {
                     <td>{p.publishable ? <span className="chip">可公开</span> : <span className="chip gray">内部</span>}</td>
                     <td className="rowactions">
                       {can("performance.write") && p.status !== "REVOKED" && <button className="btn mini" onClick={() => setModal(p)}>编辑</button>}
+                      {p.source === "ORDER" && p.status === "CONFIRMED" && can("performance.approve") && <span className="micro" title="订单业绩请在“项目执行 → 合同/订单确认”中撤销">经订单撤销</span>}
                       {can("performance.approve") && p.status === "PENDING" && <button className="btn mini primary" onClick={() => act(p, "approve")}>确认</button>}
                       {can("performance.approve") && p.status === "CONFIRMED" && p.source !== "ORDER" && <button className="btn mini warn" onClick={() => act(p, "revoke")}>撤销</button>}
                     </td>

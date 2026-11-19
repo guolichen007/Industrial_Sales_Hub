@@ -103,22 +103,30 @@ function UserForm({ initial, onClose, onSaved }: { initial?: any; onClose: () =>
 
 function EntityForm({ e, onClose, onSaved }: { e: any; onClose: () => void; onSaved: () => void }) {
   const { notify, fail } = useToast();
-  const keys = ["name", "short_name", "address", "phone", "fax", "email", "tax_no", "bank_name", "bank_account", "footer_note", "default_terms"] as const;
+  const keys = ["name", "short_name", "address", "phone", "fax", "email", "tax_no", "bank_name", "bank_account", "quote_title", "intro_text", "footer_note", "default_terms"] as const;
   const f = useForm(Object.fromEntries(keys.map((k) => [k, e[k] || ""])) as Record<(typeof keys)[number], string>);
   const save = async () => {
     try {
-      await patch(`/legal-entities/${e.id}/`, f.v);
+      await patch(`/legal-entities/${e.id}/`, { ...f.v, price_basis: basis, show_tax_columns: taxCols, template_verified: verified });
       notify("已保存。新生成的报价使用新信息，历史报价不变。");
       onSaved();
     } catch (x) {
       fail(x);
     }
   };
-  const L: Record<string, string> = { name: "公司全称", short_name: "简称", address: "地址", phone: "电话", fax: "传真", email: "邮箱", tax_no: "税号", bank_name: "开户行", bank_account: "账号", footer_note: "页脚说明", default_terms: "默认商务条款（每行一条）" };
+  const L: Record<string, string> = { name: "公司全称", short_name: "简称", address: "地址", phone: "电话", fax: "传真", email: "邮箱", tax_no: "税号", bank_name: "开户行", bank_account: "账号", quote_title: "报价单标题", intro_text: "开头语", footer_note: "页脚说明", default_terms: "默认商务条款（每行一条）" };
+  const [basis, setBasis] = useState(e.price_basis);
+  const [taxCols, setTaxCols] = useState(!!e.show_tax_columns);
+  const [verified, setVerified] = useState(!!e.template_verified);
   return (
     <Modal wide title={`出具主体 · 模板 ${e.template_key}`} onClose={onClose} foot={<><button className="btn" onClick={onClose}>取消</button><button className="btn primary" onClick={save}>保存</button></>}>
       <div className="fieldset">
         {keys.map((k) => <Field key={k} label={L[k]} full={k === "default_terms" || k === "name"}>{k === "default_terms" ? <textarea className="input textarea" style={{ minHeight: 120 }} {...f.bind(k)} /> : <input className="input" {...f.bind(k)} />}</Field>)}
+        <Field label="单价口径" hint="须按真实样张与财务确认；修改只影响之后新建/未冻结的报价">
+          <select className="select" value={basis} onChange={(x) => setBasis(x.target.value)}><option value="NET">未税单价，逐行计税</option><option value="GROSS">含税单价，倒算税额</option></select>
+        </Field>
+        <Field label="报价单列"><label className="chk"><input type="checkbox" checked={taxCols} onChange={(x) => setTaxCols(x.target.checked)} />显示税率列</label></Field>
+        <Field label="模板签收" full><label className="chk"><input type="checkbox" checked={verified} onChange={(x) => setVerified(x.target.checked)} />已按真实样张核对并经财务签收（未签收前保持不勾选）</label></Field>
       </div>
     </Modal>
   );
@@ -151,6 +159,7 @@ export default function Settings() {
   const [users, reloadUsers] = useLoad(() => (can("user.manage") ? get<any[]>("/users/") : Promise.resolve([])), []);
   const [ents, reloadEnts] = useLoad(() => get<any[]>("/legal-entities/"), []);
   const [audit] = useLoad(() => (can("audit.read") ? get("/audit-events/") : Promise.resolve({ results: [] })), []);
+  const [last, setLast] = useState("");
   const [modal, setModal] = useState<any>(null);
   return (
     <>
@@ -163,14 +172,18 @@ export default function Settings() {
         {can("user.manage") && (
           <div className="card cardpad">
             <div className="sectionhead"><h2>账号与角色</h2><button className="btn mini primary" onClick={() => setModal({ t: "user" })}>+ 新建账号</button></div>
+            <div className="notice" style={{ marginBottom: 10 }}>管理员只负责账号与系统配置，不能查看报价、金额与业绩。请为部门负责人、商务助理、销售、财务分别创建账号；停用、改角色、重置密码后对方需重新登录。</div>
+            {last && <div className="err">{last}</div>}
+            <div className="tablewrap">
             <table className="data">
               <thead><tr><th>用户名</th><th>姓名</th><th>角色</th><th>状态</th><th>最近登录</th><th /></tr></thead>
               <tbody>{(users || []).map((u) => (
                 <tr key={u.id}><td>{u.username}</td><td>{u.display_name}</td><td>{u.role_label}</td><td><Chip s={u.is_active ? "启用" : "停用"} cls={u.is_active ? "" : "red"} /></td><td>{dt(u.last_login, true)}</td>
                   <td className="rowactions"><button className="btn mini" onClick={() => setModal({ t: "user", u })}>编辑</button>
-                    {u.id !== me!.id && <button className="btn mini" onClick={() => patch(`/users/${u.id}/`, { is_active: !u.is_active }).then(reloadUsers)}>{u.is_active ? "停用" : "启用"}</button>}</td></tr>
+                    {u.id !== me!.id && <button className="btn mini" onClick={() => patch(`/users/${u.id}/`, { is_active: !u.is_active }).then(reloadUsers).catch((e) => setLast(e.message))}>{u.is_active ? "停用" : "启用"}</button>}</td></tr>
               ))}</tbody>
             </table>
+            </div>
           </div>
         )}
         <div className="card cardpad">
@@ -179,7 +192,7 @@ export default function Settings() {
             {(ents || []).map((e) => (
               <div className="choice" key={e.id}>
                 <h3>{e.short_name} · 模板 {e.template_key}</h3>
-                <small>{e.name}<br />{e.address}<br />{e.phone}</small>
+                <small>{e.name}<br />{e.address}<br />{e.phone}<br />口径：{e.price_basis === "GROSS" ? "含税单价" : "未税单价"} · {e.template_verified ? "模板已签收" : <b style={{ color: "#a96336" }}>模板未签收</b>}</small>
                 {can("legal_entity.write") && <div style={{ marginTop: 8 }}><button className="btn mini" onClick={() => setModal({ t: "ent", e })}>编辑信息与条款</button></div>}
               </div>
             ))}
