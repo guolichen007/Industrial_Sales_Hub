@@ -2,6 +2,33 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [2.1.0-rc2] - 2026-11-20（修复与现场验收候选，非正式版）
+
+### 数据安全与安装（P0）
+- R01 `seed_entities` create-only；新增 `import_entity_config`（负责人授权、审计、不改签收）与 `09-导入主体配置.bat`。
+- R02 备份格式 2：空系统也有空 `private/`；兼容 RC1 空备份。
+- R05 全局运维锁 `data/ops.lock`（Python 与 PowerShell 共用、跨进程、崩溃释放）；带 token 的维护标记只删自己的；遇忙退出码 75；计划任务等待 30 分钟后安全跳过。
+- R04 `ish_restore` 正式恢复状态机：staging 库 + staging 文件验证 → 改名切换 → 切换后校验 → 任何失败逆序回退；`-Rollback/-Cleanup`；拒绝更新 schema、旧 schema 在 staging 迁移。
+- R03/R06 独立升级器：从新包运行；旧程序做 pre-upgrade 备份并演练；整库模板快照；整套发行文件按清单切换；失败/断电按日志回滚；`-Repair/-Rollback/-Cleanup/-Status`。
+- 安装：同名服务目录检查、特殊字符路径拒绝、服务 XML 转义、app.env 原子生成、initdb 中断续做、ACL 改用 SID 且敏感目录全部关闭继承、安装末尾核对 ACL、`-Https` 仅回环监听。
+
+### 报价模板（R2）
+- 模板 2026.11-r3：依据三份真实样张的 A/B/C 三套版式；整单台数（多台总计）、质保期、Logo；RC1 模板冻结为 `pdf_r2`。
+- 负责人按模板版本签收（不可变记录、可撤销、关键配置变化自动失效）；未签收只能生成带水印的试用报价，不能发送、不能作为合同依据；草稿预览永远带水印。
+
+### 权限与功能（R3）
+- 附件分型（内部/售前/交付）与“销售可见”授权；报价附件；附件删除。
+- 客户自定义类别、关联项目筛选、历史价格组合查询、业绩筛选与内部 Excel 导出、公开案例常用筛选、公开授权照片（去 EXIF）、过期仍已发送报价提醒、项目成员与联系人编辑界面。
+
+### 安全
+- 登录强制 CSRF；HTTPS 代理模式测试；`pip-audit` 不再降级为警告。
+
+### CI
+- 固定 `ubuntu-24.04`/`windows-2022`；Playwright 版本唯一来源 `e2e/requirements.txt`；manifest 依赖 security。
+
+### 测试
+- 后端 210 → 283（PostgreSQL 16）；浏览器 56 → 72；升级/恢复脚本 Linux 模拟验收 83 + 13 项。
+
 ## [2.1.0-rc1] - 2026-11-19（局域网交付候选，试用）
 
 ### 新增

@@ -1,0 +1,36 @@
+## 场景 fault：RC1 → RC2 在 upgrade.after_backup 注入失败
+PASS upgrade.after_backup：升级失败并自动回滚（退出码 56）
+PASS upgrade.after_backup：旧版本服务恢复
+PASS upgrade.after_backup：发行文件 = RC1 清单
+PASS upgrade.after_backup：数据/文件/PDF 哈希不变
+PASS upgrade.after_backup：维护标记已解除
+PASS upgrade.after_backup：未遗留数据库快照（left=0）
+## 场景 fault：RC1 → RC2 在 upgrade.stage_copy 注入失败
+PASS upgrade.stage_copy：升级失败并自动回滚（退出码 56）
+PASS upgrade.stage_copy：旧版本服务恢复
+PASS upgrade.stage_copy：发行文件 = RC1 清单
+PASS upgrade.stage_copy：数据/文件/PDF 哈希不变
+PASS upgrade.stage_copy：维护标记已解除
+PASS upgrade.stage_copy：未遗留数据库快照（left=0）
+## 场景 fault：RC1 → RC2 在 upgrade.switch_half 注入失败
+PASS upgrade.switch_half：升级失败并自动回滚（退出码 56）
+PASS upgrade.switch_half：旧版本服务恢复
+PASS upgrade.switch_half：发行文件 = RC1 清单
+PASS upgrade.switch_half：数据/文件/PDF 哈希不变
+PASS upgrade.switch_half：维护标记已解除
+PASS upgrade.switch_half：未遗留数据库快照（left=0）
+## 场景 fault：RC1 → RC2 在 upgrade.migrate 注入失败
+PASS upgrade.migrate：升级失败并自动回滚（退出码 56）
+PASS upgrade.migrate：旧版本服务恢复
+PASS upgrade.migrate：发行文件 = RC1 清单
+PASS upgrade.migrate：数据/文件/PDF 哈希不变
+PASS upgrade.migrate：维护标记已解除
+PASS upgrade.migrate：未遗留数据库快照（left=0）
+## 场景 fault：RC1 → RC2 在 upgrade.verify 注入失败
+PASS upgrade.verify：升级失败并自动回滚（退出码 56）
+PASS upgrade.verify：旧版本服务恢复
+PASS upgrade.verify：发行文件 = RC1 清单
+PASS upgrade.verify：数据/文件/PDF 哈希不变
+PASS upgrade.verify：维护标记已解除
+PASS upgrade.verify：未遗留数据库快照（left=0）
+== 模拟验收：30 PASS / 0 FAIL

@@ -107,7 +107,17 @@ check $rc "upgrade.ps1 退出码 0" "rc=$rc"
 check $([[ $(hver) == 2.1.0-rc2 ]]; echo $?) "升级后 /healthz 版本 2.1.0-rc2"
 relcheck $INST; check $? "安装目录发行文件与 RC2 清单逐文件一致"
 cmp -s $INST/SHA256SUMS.txt $SIM/pkg-rc2/SHA256SUMS.txt; check $? "SHA256SUMS.txt = 新包清单"
-A=$(fp $INST); check $([[ "$A" == "$B" ]]; echo $?) "业务数据/PDF/附件哈希升级前后一致"
+A=$(fp $INST)
+python3 - "$B" "$A" <<'PY'
+import json, sys
+b, a = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+# 升级会新增迁移与新表（行数 0）；业务比较：升级前已有的每张表行数、全部私有文件哈希、全部已生成报价 PDF 哈希必须完全一致
+same = all(a["counts"].get(k) == v for k, v in b["counts"].items()) and a["files"] == b["files"] and a["pdfs"] == b["pdfs"] and set(b["migrations"]) <= set(a["migrations"])
+new_tables = {k: v for k, v in a["counts"].items() if k not in b["counts"]}
+print("新增表：", new_tables, "新增迁移：", sorted(set(a["migrations"]) - set(b["migrations"])))
+sys.exit(0 if same and all(v == 0 for v in new_tables.values()) else 1)
+PY
+check $? "业务数据（原有表行数）/PDF/附件哈希升级前后一致；新增迁移为纯增量"
 ls -d $INST/backups/ish-backup-*-pre-upgrade-* >/dev/null 2>&1; check $? "存在 pre-upgrade 备份（旧程序生成）"
 grep -q '"state": *"DONE"' $INST/data/ops/upgrade-*.json; check $? "升级日志状态 DONE"
 check $([[ ! -f $INST/data/MAINTENANCE ]]; echo $?) "维护标记已解除"

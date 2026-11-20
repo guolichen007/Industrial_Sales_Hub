@@ -6,27 +6,32 @@
 面向 1～5 人小型工业设备销售团队的轻量级业务系统：
 **客户与项目 → 商务报价（三公司固定模板）→ 合同/订单确认 → 项目执行进度 → 内部业绩 → 对外案例 PDF**。
 
-> **当前版本 2.1.0-rc1（局域网交付候选，试用版）**：首期部署方式为**一台 Windows 主机集中安装、局域网内其他电脑用浏览器访问**，
-> 数据库为本机 PostgreSQL，不上云、不需要公网域名。
-> 门禁状态见 [`docs/evidence/LAN/README.md`](docs/evidence/LAN/README.md)；**三份真实报价样张签收、Windows 现场安装与双机 UAT 仍为 BLOCKED**，
-> 见 [`docs/剩余问题.md`](docs/剩余问题.md)。在这些完成前不发布正式版 `v2.1.0`。
+> **当前版本 2.1.0-rc2（修复与现场验收候选，非正式版）**：首期部署方式为**一台 Windows 主机集中安装、局域网内其他电脑用浏览器访问**，
+> 数据库为本机 PostgreSQL，不上云、不需要公网域名。RC2 收敛数据安全（重复安装、备份、可回退恢复、可回滚升级、运维互斥）与三公司真实版式模板。
+> 门禁状态见 [`docs/evidence/RC2/README.md`](docs/evidence/RC2/README.md)；**模板负责人签收、财务黄金用例、Windows 实机、双机断网 UAT、HTTPS 仍为外部阻断**，
+> 见 [`docs/剩余问题.md`](docs/剩余问题.md)。在这些完成前不发布正式版 `v2.1.0`、不合并 main。
 
 ## 文档入口
 
 | 文档 | 用途 |
 |---|---|
 | [`docs/LAN安装使用手册.md`](docs/LAN安装使用手册.md) | Windows 主机从零安装、首次使用、日常运维、HTTPS、常见问题 |
-| [`docs/备份恢复与升级手册.md`](docs/备份恢复与升级手册.md) | 一致性备份、恢复演练、正式恢复、升级与回滚 |
+| [`docs/备份恢复与升级手册.md`](docs/备份恢复与升级手册.md) | 运维互斥、一致性备份、恢复演练、可回退正式恢复、独立升级器与回滚 |
+| [`docs/RC2-Windows实机验收手册.md`](docs/RC2-Windows实机验收手册.md) | Windows 11 测试机逐步命令与证据清单（R4） |
+| [`docs/RC2-HTTPS内网证书配置手册.md`](docs/RC2-HTTPS内网证书配置手册.md) | 内部 CA + 反向代理、仅回环监听 |
+| [`docs/RC2-业务功能追踪矩阵.md`](docs/RC2-业务功能追踪矩阵.md) | 甲方原始需求逐条完成/后置/不做 |
+| [`docs/api.md`](docs/api.md) | 接口与服务端授权一览（测试保证与路由一致） |
 | [`docs/权限矩阵.md`](docs/权限矩阵.md) | 五个角色的服务端实际授权 |
 | [`docs/decisions/V2.1-LAN-决策记录.md`](docs/decisions/V2.1-LAN-决策记录.md) | D1–D7 业务决策（覆盖 G0 中冲突条目） |
 | [`docs/adr/`](docs/adr/) | 架构决策（ADR-004：局域网部署与运行模式） |
-| [`docs/templates/三公司报价模板-字段映射与签收.md`](docs/templates/三公司报价模板-字段映射与签收.md) | 真实样张映射与签收流程 |
+| [`docs/templates/三公司报价模板-字段映射与签收.md`](docs/templates/三公司报价模板-字段映射与签收.md) | 三版式、私有对照结论与负责人签收流程（不含真实资料） |
 | [`docs/evidence/LAN/`](docs/evidence/LAN/) | L0–L4 门禁证据（测试结果、截图、演练输出） |
 
 ## 正式安装（Windows 局域网）
 
 1. 构建机执行 `deploy/windows/build_package.sh <输出目录>`，得到 `Industrial_Sales_Hub_<版本>_LAN_Windows_x64.zip` 与 `.sha256`（由固定提交构建，内含 Python 运行时、PostgreSQL 16、VC++ 运行库、已构建前端）。
 2. 在甲方 Windows 主机解压到纯英文路径（如 `D:\IndustrialSalesHub`），**右键 `01-安装部署.bat` → 以管理员身份运行**，按提示创建管理员。
+   升级时从**新版本目录**运行 `07-升级程序.bat -InstallDir <安装目录>`。
 3. 其他电脑在浏览器打开安装结束时显示的局域网地址。详细步骤见安装手册。
 
 运行模式 `ISH_MODE`：`DEMO`（本机演示，SQLite、演示账号，仅回环访问）/ `LAN`（正式，PostgreSQL，禁止 DEBUG 与演示数据）/ `CLOUD`（保留的 Docker 部署，本期不验收）。

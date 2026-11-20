@@ -151,8 +151,11 @@ echo "== 脚本、配置模板、许可"
 cp deploy/windows/*.bat "$STAGE/"
 cp -r deploy/windows/scripts "$STAGE/scripts"
 cp -r deploy/windows/config-templates "$STAGE/config-templates"
+mkdir -p "$STAGE/tools" && cp deploy/windows/tools/*.ps1 "$STAGE/tools/"
 cp docs/LAN安装使用手册.md "$STAGE/使用说明.md"
 cp docs/备份恢复与升级手册.md "$STAGE/备份恢复与升级手册.md"
+cp docs/RC2-Windows实机验收手册.md "$STAGE/Windows实机验收手册.md"
+cp docs/RC2-HTTPS内网证书配置手册.md "$STAGE/HTTPS内网证书配置手册.md"
 mkdir -p "$STAGE/licenses"
 cp backend/fonts/LICENSE-* "$STAGE/licenses/"
 cp "$STAGE/runtime/pgsql/server_license.txt" "$STAGE/licenses/PostgreSQL-server_license.txt"
@@ -172,6 +175,30 @@ mkdir -p "$STAGE/licenses/WinSW"; echo "WinSW $WINSW_VER — MIT License — htt
 done_ meta; fi
 
 echo "$VERSION (git $SHA)" > "$STAGE/VERSION.txt"
+echo "== 发布前安全检查（无真实资料/口令/数据库/路径穿越）"
+python3 - "$STAGE" <<'PY'
+import re, sys
+from pathlib import Path
+stage = Path(sys.argv[1])
+bad = []
+for f in stage.rglob("*"):
+    rel = f.relative_to(stage).as_posix()
+    if f.is_symlink() or ".." in rel.split("/") or rel.startswith("/"):
+        bad.append(f"非法路径/符号链接：{rel}")
+    if not f.is_file():
+        continue
+    low = rel.lower()
+    if re.search(r"(\.sqlite3|\.dump|app\.env|postgres-superuser|\.xls[xm]?$|pgdata/|/data/private/|backups/)", low):
+        bad.append(f"不应出现在安装包：{rel}")
+    if f.suffix.lower() in (".py", ".ps1", ".bat", ".md", ".json", ".txt", ".js", ".html") and f.stat().st_size < 5_000_000:
+        t = f.read_text(encoding="utf-8", errors="ignore")
+        for pat in ("博恩特", "孚尔德", "科莱德", "Bolenteck", "Kelad", "太原向明", "哈尔滨重型", "大连通达", "Demo@2026"):
+            if pat in t and not rel.startswith("licenses/"):
+                bad.append(f"疑似真实资料/演示口令（{pat}）：{rel}")
+if bad:
+    sys.exit("发布检查失败：\n" + "\n".join(bad[:30]))
+print("发布检查通过")
+PY
 echo "== 校验清单"
 ( cd "$STAGE" && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum | sed 's#  \./#  #' > SHA256SUMS.txt )
 

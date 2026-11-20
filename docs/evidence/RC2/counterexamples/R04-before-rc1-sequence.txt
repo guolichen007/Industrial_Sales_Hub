@@ -1,0 +1,7 @@
+NOTICE:  database "ishrc1demo" does not exist, skipping
+RC1 步骤 1 pg_restore 到正式库：rc = 0
+  正式库项目： ['P-1']
+  --clean 后 dump 中不存在的新表仍在： new_feature_table
+RC1 步骤 2 复制 private 时失败（模拟磁盘满/权限拒绝/复制中断）→ 脚本 Fail 退出
+  结果：数据库 = 备份时刻（P-1）；private 目录 = 不存在 ；旧文件在 private.old-demo
+  => 半状态：应用启动后数据库引用的 PDF/附件不存在，且需人工判断如何复原。

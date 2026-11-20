@@ -1,0 +1,8 @@
+新增：A 【占位A】
+新增：B 【占位B】
+=========================== short test summary info ============================
+FAILED tests/test_rc2_r01_entities.py::test_seed_entities_is_create_only - As...
+FAILED tests/test_rc2_r01_entities.py::test_seed_entities_rejects_verified_flag_in_json
+FAILED tests/test_rc2_r01_entities.py::test_import_entity_config_updates_but_never_touches_verification
+FAILED tests/test_rc2_r01_entities.py::test_import_entity_config_dry_run_changes_nothing
+4 failed, 1 passed in 5.19s

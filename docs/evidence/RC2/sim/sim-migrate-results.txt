@@ -1,0 +1,21 @@
+## 场景 migrate：RC2 → rc3sim（含真实迁移）
+PASS 迁移成功后 VERIFY 失败 → 回滚（56）
+PASS 数据库切回升级前快照：无 sim_upgrade_marker、迁移列表与升级前相同
+PASS 回滚后版本 rc2
+PASS 迁移后的库保留为 _failed_ 供分析
+PASS 迁移本身失败 → 回滚（56）
+PASS 迁移失败回滚后数据不变
+PASS RC2 → rc3sim 成功
+PASS 新迁移已应用
+PASS -Cleanup 删除旧版本与快照
+PASS 旧版本目录已删除
+## 场景 crash：SWITCH 中途进程被杀（模拟断电）
+PASS 进程在 SWITCH 中途终止（99）
+PASS 崩溃后维护标记保留（系统只读）
+PASS 崩溃后安装目录处于半切换状态（scripts 已移出）
+PASS 从新包目录执行 -Rollback 成功
+PASS 发行文件恢复为 RC1 清单
+PASS 数据不变
+PASS 旧版本服务恢复
+PASS 维护标记已解除
+== 模拟验收：18 PASS / 0 FAIL

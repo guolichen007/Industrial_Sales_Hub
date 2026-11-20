@@ -1,0 +1,12 @@
+----------------------------- Captured stdout call -----------------------------
+备份完成：/sessions/eager-compassionate-wright/mnt/outputs/tmp/pt/test_status_files_are_per_task0/bk/ish-backup-20261120-114122（0.12 MB，0.2 秒，维护窗口内等待写入 0.01 秒）
+=========================== short test summary info ============================
+FAILED tests/test_rc2_r05_ops_lock.py::test_empty_system_backup_has_empty_private_dir
+FAILED tests/test_rc2_r05_ops_lock.py::test_legacy_format1_backup_without_private_still_verifies
+FAILED tests/test_rc2_r05_ops_lock.py::test_ops_lock_is_exclusive_and_busy_exits_cleanly
+FAILED tests/test_rc2_r05_ops_lock.py::test_ops_lock_is_cross_process - Modul...
+FAILED tests/test_rc2_r05_ops_lock.py::test_maintenance_flag_owner_token - Mo...
+FAILED tests/test_rc2_r05_ops_lock.py::test_concurrent_backups_never_remove_each_others_window
+FAILED tests/test_rc2_r05_ops_lock.py::test_backup_does_not_remove_foreign_flag_on_failure
+FAILED tests/test_rc2_r05_ops_lock.py::test_status_files_are_per_task_and_atomic
+8 failed in 6.84s

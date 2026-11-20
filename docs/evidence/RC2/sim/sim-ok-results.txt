@@ -1,0 +1,18 @@
+## 场景 ok：RC1(875ef0c) → RC2 升级成功
+PASS 升级前应用版本 rc1
+PASS upgrade.ps1 退出码 0
+PASS 升级后 /healthz 版本 2.1.0-rc2
+PASS 安装目录发行文件与 RC2 清单逐文件一致
+PASS SHA256SUMS.txt = 新包清单
+PASS 业务数据（原有表行数）/PDF/附件哈希升级前后一致；新增迁移为纯增量
+PASS 存在 pre-upgrade 备份（旧程序生成）
+PASS 升级日志状态 DONE
+PASS 维护标记已解除
+PASS 同版本无 -Repair 被拒绝(52)
+PASS 降级被拒绝（RC1 包的旧升级器或新规则）rc=1
+PASS 已完成升级可按日志回滚（退出码 0）
+PASS 回滚后版本 rc1
+PASS 回滚后发行文件与 RC1 清单逐文件一致
+PASS 回滚后 SHA256SUMS.txt = RC1 清单
+PASS 回滚后数据与升级前一致
+== 模拟验收：16 PASS / 0 FAIL
