@@ -99,7 +99,9 @@ if (-not $installed) {
     $lan = Get-LanAddresses
     $hosts = @('localhost', '127.0.0.1', $env:COMPUTERNAME) + $lan
     $scheme = if ($Https) { 'https' } else { 'http' }
-    $origins = ($hosts | Where-Object { $_ -ne 'localhost' } | ForEach-Object { "${scheme}://${_}:$AppPort" }) -join ','
+    # HTTP 试用：浏览器直接访问应用端口；HTTPS：浏览器访问反向代理的 443（应用只在回环），来源为 https://<主机>
+    if ($Https) { $origins = ($hosts | Where-Object { $_ -ne 'localhost' } | ForEach-Object { "https://${_}" }) -join ',' }
+    else { $origins = ($hosts | Where-Object { $_ -ne 'localhost' } | ForEach-Object { "${scheme}://${_}:$AppPort" }) -join ',' }
     $listen = if ($Https) { "127.0.0.1:$AppPort" } else { "0.0.0.0:$AppPort" }
     $proxyLines = if ($Https) { @('ISH_TRUST_PROXY_HEADER=1', 'ISH_TRUSTED_PROXY=127.0.0.1') } else { @() }
     $cfgTmp = "$AppEnv.$PID.tmp"
@@ -321,8 +323,8 @@ Write-Ok "应用就绪：$health"
 Write-Step '生成客户端快捷方式'
 $lan = Get-LanAddresses
 $scheme = if ($cfg['ISH_HTTPS'] -eq '1') { 'https' } else { 'http' }
-$urls = @($lan | ForEach-Object { "${scheme}://${_}:$AppPort/" })
-$urls += "${scheme}://$($env:COMPUTERNAME):$AppPort/"
+if ($scheme -eq 'https') { $urls = @($lan | ForEach-Object { "https://${_}/" }); $urls += "https://$($env:COMPUTERNAME)/" }
+else { $urls = @($lan | ForEach-Object { "${scheme}://${_}:$AppPort/" }); $urls += "${scheme}://$($env:COMPUTERNAME):$AppPort/" }
 $sc = Join-Path $Root '客户端快捷方式'
 New-Item -ItemType Directory -Force -Path $sc | Out-Null
 $first = $urls[0]

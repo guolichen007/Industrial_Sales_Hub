@@ -198,7 +198,10 @@ def test_role_change_kills_sessions(users):
 
 def test_login_csrf_enforced_for_real_clients(users):
     c = APIClient(enforce_csrf_checks=True)
-    assert c.post("/api/auth/login/", {"username": "sales", "password": "Test@12345"}, format="json").status_code == 200  # 登录本身豁免（Session 尚未建立）
+    # RC2 变更：登录不再豁免 CSRF（防“登录 CSRF”）。无令牌 403；先取令牌再登录 200
+    assert c.post("/api/auth/login/", {"username": "sales", "password": "Test@12345"}, format="json").status_code == 403
+    tok = c.get("/api/auth/csrf/").cookies["csrftoken"].value
+    assert c.post("/api/auth/login/", {"username": "sales", "password": "Test@12345"}, format="json", HTTP_X_CSRFTOKEN=tok).status_code == 200
     r = c.post("/api/projects/", {"name": "x"}, format="json")
     assert r.status_code == 403  # 已登录写操作必须带 CSRF
 

@@ -9,6 +9,7 @@ from django.db import transaction
 from django.middleware.csrf import get_token
 from django.utils import timezone
 from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import serializers, viewsets
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -79,8 +80,12 @@ class PublicInfoView(APIView):
         })
 
 
+@method_decorator(csrf_protect, name="dispatch")
 class LoginView(APIView):
-    """登录。失败限速基于数据库审计记录（多线程/多进程一致），按“用户名”与“来源地址+用户名”双维度。"""
+    """登录。失败限速基于数据库审计记录（多线程/多进程一致），按“用户名”与“来源地址+用户名”双维度。
+
+    RC2：登录也强制 CSRF（DRF 只对已认证会话检查 CSRF，未登录的登录请求原本豁免，存在“登录 CSRF”风险：
+    第三方页面可把用户登录到攻击者账号）。前端每次写请求都会先获取 csrftoken 并携带 X-CSRFToken。"""
 
     permission_classes = [AllowAny]
 
