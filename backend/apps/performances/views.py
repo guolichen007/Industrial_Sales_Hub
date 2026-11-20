@@ -15,7 +15,7 @@ from apps.common.roles import SALES, HasCap, can, role_of
 from apps.projects.scope import performances_for
 from apps.organizations.models import LegalEntity
 
-from .models import CaseRelease, Performance
+from .models import CasePhoto, CaseRelease, Performance
 from .pdf import render_case_pdf
 from .public import public_case
 
@@ -315,3 +315,92 @@ class CaseReleaseViewSet(viewsets.ModelViewSet):
         disp = "inline" if request.query_params.get("inline") == "1" else "attachment"
         resp["Content-Disposition"] = f"{disp}; filename=\"case-{cr.id}.pdf\"; filename*=UTF-8''{urlquote(fname)}"
         return resp
+
+
+class CasePhotoView(APIView):
+    """业绩照片：GET 列表（内部，performance.write）/ POST 上传（performance.write）/ PATCH 授权（仅 LEADER）/ DELETE。"""
+
+    def get(self, request):
+        if not can(request.user, "performance.write"):
+            raise PermissionDenied()
+        pid = int_param(request.query_params.get("performance"), "performance", required=True)
+        return Response([_photo_row(x) for x in CasePhoto.objects.filter(performance_id=pid).select_related("authorized_by")])
+
+    def post(self, request):
+        import io
+
+        from PIL import Image, ImageOps
+
+        if not can(request.user, "performance.write"):
+            raise PermissionDenied()
+        perf = Performance.objects.filter(pk=int_param(request.data.get("performance"), "performance", required=True)).first()
+        f = request.FILES.get("file")
+        if not perf or not f or f.size > 10 * 1024 * 1024:
+            raise BusinessError("请选择不超过 10 MB 的 JPG/PNG 照片", code="bad_photo", http_status=400)
+        if perf.photos.count() >= 12:
+            raise BusinessError("每条业绩最多 12 张照片", code="too_many", http_status=400)
+        try:
+            im = Image.open(f)
+            if im.format not in ("JPEG", "PNG"):
+                raise ValueError(im.format)
+            im = ImageOps.exif_transpose(im).convert("RGB")
+            im.thumbnail((1600, 1600))
+            out = io.BytesIO()
+            im.save(out, "JPEG", quality=85)  # 重新编码：不写入任何 EXIF/GPS
+            data = out.getvalue()
+        except Exception:  # noqa: BLE001
+            raise BusinessError("图片无法识别，请使用 JPG 或 PNG", code="bad_photo", http_status=400)
+        ph = CasePhoto.objects.create(performance=perf, caption=str_param(request.data.get("caption"), "caption", 100) or "", storage_key=store_private("case-photos", data, ".jpg"),
+                                      sha256=sha256_bytes(data), width=im.width, height=im.height, uploaded_by=request.user)
+        audit(request, "upload", "case_photo", ph.id, f"上传业绩照片（{perf.title}）")
+        return Response(_photo_row(ph), status=201)
+
+
+class CasePhotoDetailView(APIView):
+    def patch(self, request, pk):
+        ph = CasePhoto.objects.filter(pk=pk).first()
+        if not ph:
+            raise PermissionDenied()
+        if "authorized" in request.data:
+            if not can(request.user, "case.withdraw"):  # 部门负责人
+                raise PermissionDenied("只有部门负责人可以确认照片已获公开授权")
+            auth = request.data.get("authorized") in (True, "true", "1", 1)
+            if auth:
+                note = str_param(request.data.get("authorization_note"), "authorization_note", 200, required=True)
+                ph.authorized, ph.authorized_by, ph.authorized_at, ph.authorization_note = True, request.user, timezone.now(), note
+            else:
+                ph.authorized, ph.authorized_by, ph.authorized_at = False, None, None
+        elif not can(request.user, "performance.write"):
+            raise PermissionDenied()
+        if "caption" in request.data:
+            ph.caption = str_param(request.data.get("caption"), "caption", 100) or ""
+        ph.save()
+        audit(request, "authorize" if "authorized" in request.data else "update", "case_photo", ph.id, f"照片公开授权={'是' if ph.authorized else '否'}")
+        return Response(_photo_row(ph))
+
+    def delete(self, request, pk):
+        ph = CasePhoto.objects.filter(pk=pk).first()
+        if not ph or not can(request.user, "performance.write"):
+            raise PermissionDenied()
+        audit(request, "delete", "case_photo", ph.id, "删除业绩照片")
+        ph.delete()
+        return Response(status=204)
+
+
+class CasePhotoImageView(APIView):
+    """图片内容：内部（performance.write）可看全部；case.read 角色只能看“已授权 + 已确认 + 可公开”业绩的照片。"""
+
+    def get(self, request, pk):
+        ph = CasePhoto.objects.select_related("performance").filter(pk=pk).first()
+        ok = ph and (can(request.user, "performance.write") or (can(request.user, "case.read") and ph.authorized and ph.performance.status == "CONFIRMED" and ph.performance.publishable))
+        if not ok:
+            raise PermissionDenied("无权查看该照片")
+        data = read_private(ph.storage_key)
+        if sha256_bytes(data) != ph.sha256:
+            raise BusinessError("文件校验失败", code="integrity", http_status=500)
+        return HttpResponse(data, content_type="image/jpeg")
+
+
+def _photo_row(ph):
+    return {"id": ph.id, "performance": ph.performance_id, "caption": ph.caption, "width": ph.width, "height": ph.height, "authorized": ph.authorized,
+            "authorized_by_name": ph.authorized_by.name if ph.authorized_by else "", "authorized_at": ph.authorized_at, "authorization_note": ph.authorization_note, "uploaded_at": ph.uploaded_at}

@@ -44,6 +44,22 @@ class Command(BaseCommand):
                     errors.append(f"案例 PDF 哈希不一致 {c.id}")
             except FileNotFoundError:
                 errors.append(f"案例 PDF 缺失 {c.id}")
+        from apps.performances.models import CasePhoto
+
+        for ph in CasePhoto.objects.all():
+            try:
+                if sha256_bytes(read_private(ph.storage_key)) != ph.sha256:
+                    errors.append(f"案例照片哈希不一致 {ph.id}")
+            except FileNotFoundError:
+                errors.append(f"案例照片缺失 {ph.id}")
+        from apps.organizations.models import LegalEntity
+
+        for e in LegalEntity.objects.exclude(logo_key=""):
+            try:
+                if sha256_bytes(read_private(e.logo_key)) != e.logo_sha256:
+                    errors.append(f"主体 Logo 哈希不一致 {e.id}")
+            except FileNotFoundError:
+                errors.append(f"主体 Logo 缺失 {e.id}")
         for a in Attachment.objects.all():
             try:
                 if sha256_bytes(read_private(a.storage_key)) != a.sha256:

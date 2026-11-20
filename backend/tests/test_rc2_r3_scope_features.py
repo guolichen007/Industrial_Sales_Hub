@@ -234,3 +234,64 @@ def test_dashboard_overdue_sent_quote_reminder(client_for, base, make_quote):
     for who in ("sales", "finance"):
         dd = client_for(who).get("/api/dashboard/").json()
         assert "quotes_overdue" not in dd and "quotes_expiring" not in dd
+
+
+# ------------------------------------------------------------------ 公开授权照片
+def _jpeg_with_gps():
+    from PIL import Image
+
+    im = Image.new("RGB", (64, 48), (200, 30, 30))
+    exif = Image.Exif()
+    exif[0x010F] = "SecretCameraMaker"  # Make
+    exif[0x010E] = "GPS 31.14N 121.29E (secret site)"  # ImageDescription：模拟含位置的元数据
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", exif=exif)
+    return buf.getvalue()
+
+
+def test_case_photos_authorization_and_exif_stripped(client_for, users, base):
+    import subprocess
+    import tempfile
+
+    p = _perf(users, title="照片案例")
+    raw = _jpeg_with_gps()
+    assert b"SecretCameraMaker" in raw and b"secret site" in raw
+    asst = client_for("assistant")
+    r = asst.post("/api/case-photos/", {"performance": p.id, "caption": "现场照片", "file": SimpleUploadedFile("p.jpg", raw)}, format="multipart")
+    assert r.status_code == 201
+    ph = r.json()
+    img = asst.get(f"/api/case-photos/{ph['id']}/image/").content
+    assert b"SecretCameraMaker" not in img and b"secret site" not in img and b"Exif" not in img  # 重新编码去除元数据
+    s = client_for("sales")
+    # 未授权：销售看不到，公开案例与预览不含照片
+    assert s.get(f"/api/case-photos/{ph['id']}/image/").status_code == 403
+    assert s.get("/api/public-cases/").json()[0]["photos"] == []
+    assert s.post("/api/case-preview/", {"performance_ids": [p.id]}, format="json").json()["cases"][0]["photos"] == []
+    # 只有负责人可授权，且必须写授权依据
+    assert asst.patch(f"/api/case-photos/{ph['id']}/", {"authorized": True, "authorization_note": "x"}, format="json").status_code == 403
+    lead = client_for("leader")
+    assert lead.patch(f"/api/case-photos/{ph['id']}/", {"authorized": True}, format="json").status_code == 400
+    assert lead.patch(f"/api/case-photos/{ph['id']}/", {"authorized": True, "authorization_note": "业主 2026-11 书面同意"}, format="json").status_code == 200
+    cases = s.get("/api/public-cases/").json()
+    assert cases[0]["photos"][0]["caption"] == "现场照片" and "authorization_note" not in json_dump(cases)
+    assert s.get(f"/api/case-photos/{ph['id']}/image/").status_code == 200
+    assert s.get(f"/api/case-photos/?performance={p.id}").status_code == 403  # 内部列表（含授权依据）不对销售
+    # 案例册 PDF 嵌入照片，且 PDF 中无 EXIF 文本
+    r = s.post("/api/case-releases/", {"performance_ids": [p.id], "title": "照片册"}, format="json")
+    assert r.status_code == 201
+    pdf = s.get(f"/api/case-releases/{r.json()['id']}/pdf/").content
+    assert b"/Subtype /Image" in pdf and b"SecretCameraMaker" not in pdf
+    # 撤销授权后：新的公开数据不再含照片；已发出的册子按快照保留（不可追回，界面已提示）
+    lead.patch(f"/api/case-photos/{ph['id']}/", {"authorized": False}, format="json")
+    assert s.get("/api/public-cases/").json()[0]["photos"] == []
+    assert s.get(f"/api/case-photos/{ph['id']}/image/").status_code == 403
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as f:
+        f.write(pdf)
+        f.flush()
+        assert "SecretCameraMaker" not in subprocess.run(["pdfinfo", f.name], capture_output=True, text=True).stdout
+
+
+def json_dump(x):
+    import json
+
+    return json.dumps(x, ensure_ascii=False)

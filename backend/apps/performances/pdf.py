@@ -7,9 +7,33 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from apps.common.pdfkit import make_numbered_canvas, mx, register_fonts
+from apps.common.pdfkit import make_numbered_canvas, mx, read_private, register_fonts
 
 from .public import PUBLIC_FIELDS
+
+
+def _photo_strip(photos, width, style):
+    """已授权照片缩略图（最多 3 张一行）。按快照中的 sha256 读取并校验，内容不一致则拒绝生成。"""
+    from reportlab.lib.utils import ImageReader
+    from reportlab.platypus import Image
+
+    from apps.common.pdfkit import sha256_bytes
+    from apps.performances.models import CasePhoto
+
+    cells = []
+    for ph in photos[:3]:
+        obj = CasePhoto.objects.filter(pk=ph["id"], sha256=ph["sha256"], authorized=True).first()
+        if not obj:
+            raise ValueError("案例照片未授权或已变化")
+        data = read_private(obj.storage_key)
+        if sha256_bytes(data) != ph["sha256"]:
+            raise ValueError("案例照片校验失败")
+        w, h = ImageReader(io.BytesIO(data)).getSize()
+        k = min((width / 3 - 4 * mm) / w, 38 * mm / h)
+        cells.append([Image(io.BytesIO(data), width=w * k, height=h * k), Paragraph(mx(ph.get("caption") or ""), style)])
+    t = Table([[c[0] for c in cells], [c[1] for c in cells]], colWidths=[width / 3] * len(cells), hAlign="LEFT")
+    t.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 2)]))
+    return t
 
 
 def render_case_pdf(snap: dict) -> bytes:
@@ -48,6 +72,8 @@ def render_case_pdf(snap: dict) -> bytes:
             rows.append(["", Paragraph(mx("项目业主：" + c["owner_display"]), base)])
         if c.get("public_summary"):
             rows.append(["", Paragraph(mx(c["public_summary"]), small)])
+        if c.get("photos"):
+            rows.append(["", _photo_strip(c["photos"], W - 12 * mm, small)])
         t = Table(rows, colWidths=[12 * mm, W - 12 * mm])
         t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEABOVE", (0, 0), (-1, 0), 0.6, colors.HexColor("#d9e3ea")), ("TOPPADDING", (0, 0), (-1, 0), 8), ("TOPPADDING", (0, 1), (-1, -1), 1.5), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
         story += [KeepTogether([t]), Spacer(1, 3 * mm)]

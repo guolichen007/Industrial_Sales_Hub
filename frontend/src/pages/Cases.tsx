@@ -78,6 +78,7 @@ export default function Cases() {
                   <h3>{c.title}</h3>
                   <div className="micro">{[c.year, c.region, c.industry, c.machine_type].filter(Boolean).join(" · ")}</div>
                   <div className="sub">供货产品：{c.product_summary || "—"}{c.owner_display && ` ｜ 业主：${c.owner_display}`}</div>
+                  {(c.photos || []).length > 0 && <div className="tagline">{c.photos.map((ph: any) => <img key={ph.id} src={`/api/case-photos/${ph.id}/image/`} alt={ph.caption} title={ph.caption} style={{ height: 56, borderRadius: 4 }} />)}</div>}
                   {c.public_summary && <p className="sub">{c.public_summary}</p>}
                 </div>
               ))}

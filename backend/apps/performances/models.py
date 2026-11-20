@@ -37,6 +37,27 @@ class Performance(models.Model):
         ordering = ["-year", "-id"]
 
 
+class CasePhoto(models.Model):
+    """业绩现场照片（RC2）：上传时用 Pillow 重新编码为 JPEG（去除 EXIF/GPS 等元数据）；
+    只有部门负责人勾选“已获公开授权”的照片才会出现在公开案例预览与案例册 PDF 中。"""
+
+    performance = models.ForeignKey(Performance, on_delete=models.CASCADE, related_name="photos")
+    caption = models.CharField("图片说明（对外）", max_length=100, blank=True)
+    storage_key = models.CharField(max_length=200, unique=True)
+    sha256 = models.CharField(max_length=64)
+    width = models.PositiveIntegerField(default=0)
+    height = models.PositiveIntegerField(default=0)
+    authorized = models.BooleanField("已获公开授权", default=False)
+    authorized_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    authorized_at = models.DateTimeField(null=True, blank=True)
+    authorization_note = models.CharField("授权依据（如业主书面同意）", max_length=200, blank=True)
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+
 class CaseRelease(models.Model):
     """对外案例册。与内部业绩隔离：只存白名单字段快照。"""
 

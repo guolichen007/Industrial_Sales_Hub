@@ -1,9 +1,55 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { get, money, patch, post, qs } from "../api";
+import { api, del, get, money, patch, post, qs } from "../api";
 import { useAuth } from "../auth";
 import { Chip, Field, Loading, Modal, PageHead, useForm, useLoad, useToast } from "../ui";
 import { ImportModal } from "./Settings";
+
+function CasePhotos({ perf }: { perf: any }) {
+  const { notify, fail } = useToast();
+  const { can } = useAuth();
+  const [list, reload] = useLoad(() => get<any[]>(`/case-photos/?performance=${perf.id}`), [perf.id]);
+  const up = async (file?: File) => {
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("performance", String(perf.id));
+    fd.append("caption", prompt("对外图片说明（可留空）") || "");
+    fd.append("file", file);
+    try {
+      await api("/case-photos/", { form: fd });
+      notify("已上传（已去除拍摄位置等元数据）；需负责人确认公开授权后才会出现在对外案例中");
+      reload();
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const authorize = async (ph: any, on: boolean) => {
+    const note = on ? prompt("公开授权依据（如：业主 2026-11 书面同意）") : "";
+    if (on && !note) return;
+    try {
+      await patch(`/case-photos/${ph.id}/`, { authorized: on, authorization_note: note });
+      reload();
+    } catch (e) {
+      fail(e);
+    }
+  };
+  return (
+    <div className="formfield full">
+      <label>案例照片（默认内部；负责人确认授权后才进入对外案例）</label>
+      <div className="tagline">
+        {(list || []).map((ph) => (
+          <div key={ph.id} style={{ textAlign: "center" }}>
+            <img src={`/api/case-photos/${ph.id}/image/`} alt={ph.caption} style={{ height: 64, borderRadius: 6 }} />
+            <div className="micro">{ph.caption || "—"} · {ph.authorized ? `已授权（${ph.authorized_by_name}）` : "未授权"}</div>
+            {can("case.withdraw") && <button className="btn mini" onClick={() => authorize(ph, !ph.authorized)}>{ph.authorized ? "撤销授权" : "确认公开授权"}</button>}
+            <button className="btn mini" onClick={() => confirm("删除这张照片？") && del(`/case-photos/${ph.id}/`).then(reload).catch(fail)}>删除</button>
+          </div>
+        ))}
+        <input type="file" accept="image/jpeg,image/png" onChange={(e) => up(e.target.files?.[0])} />
+      </div>
+    </div>
+  );
+}
 
 function PerfForm({ initial, onClose, onSaved }: { initial?: any; onClose: () => void; onSaved: () => void }) {
   const { can } = useAuth();
@@ -48,6 +94,7 @@ function PerfForm({ initial, onClose, onSaved }: { initial?: any; onClose: () =>
           </div>
         </Field>
         {can("performance.see_amount") && <Field label="内部备注" full><textarea className="input textarea" {...f.bind("remark")} /></Field>}
+        {initial && <CasePhotos perf={initial} />}
       </div>
     </Modal>
   );
