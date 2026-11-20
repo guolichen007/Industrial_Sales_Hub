@@ -3,22 +3,29 @@
 Set-StrictMode -Version 3
 $ErrorActionPreference = 'Stop'
 
-$script:Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$script:App = Join-Path $Root 'app'
-$script:Backend = Join-Path $App 'backend'
-$script:Runtime = Join-Path $Root 'runtime'
-$script:Python = Join-Path $Runtime 'python\python.exe'
-$script:PgBin = Join-Path $Runtime 'pgsql\bin'
-$script:Config = Join-Path $Root 'config'
-$script:AppEnv = Join-Path $Config 'app.env'
-$script:Data = Join-Path $Root 'data'
-$script:PgData = Join-Path $Data 'pgdata'
-$script:Logs = Join-Path $Root 'logs'
-$script:Backups = Join-Path $Root 'backups'
-$script:Services = Join-Path $Root 'services'
-$script:AdminOnly = Join-Path $Config 'admin-only'
 $script:SvcDb = 'IndustrialSalesHub-DB'
 $script:SvcApp = 'IndustrialSalesHub-App'
+$script:BackupTask = 'IndustrialSalesHub-DailyBackup'
+
+function Set-IshRoot([string]$dir) {
+    # 所有路径由安装根目录推导；升级器从新安装包运行时用它指向“被升级的安装目录”
+    $script:Root = (Resolve-Path -LiteralPath $dir).Path.TrimEnd('\')
+    $script:App = Join-Path $script:Root 'app'
+    $script:Backend = Join-Path $script:App 'backend'
+    $script:Runtime = Join-Path $script:Root 'runtime'
+    $script:Python = Join-Path $script:Runtime 'python\python.exe'
+    $script:PgBin = Join-Path $script:Runtime 'pgsql\bin'
+    $script:Config = Join-Path $script:Root 'config'
+    $script:AppEnv = Join-Path $script:Config 'app.env'
+    $script:Data = Join-Path $script:Root 'data'
+    $script:PgData = Join-Path $script:Data 'pgdata'
+    $script:Logs = Join-Path $script:Root 'logs'
+    $script:Backups = Join-Path $script:Root 'backups'
+    $script:Services = Join-Path $script:Root 'services'
+    $script:AdminOnly = Join-Path $script:Config 'admin-only'
+    $script:OpsDir = Join-Path $script:Data 'ops'
+}
+Set-IshRoot (Join-Path $PSScriptRoot '..')
 
 function Write-Step([string]$msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan; Write-IshLog "STEP $msg" }
 function Write-Ok([string]$msg) { Write-Host "    [OK] $msg" -ForegroundColor Green; Write-IshLog "OK $msg" }
@@ -147,49 +154,55 @@ function Test-SyncedFolder([string]$path) {
     return $null
 }
 
+# 内置账户一律使用 SID（中文/德文等本地化系统中组名不同）：SYSTEM S-1-5-18，Administrators S-1-5-32-544，Users S-1-5-32-545
+function Get-Sid([string]$sid) { return New-Object System.Security.Principal.SecurityIdentifier($sid) }
+function Get-ServiceAccount([string]$svc) { return New-Object System.Security.Principal.NTAccount('NT SERVICE', $svc) }
+
 function Set-RootAcl {
     # 安装根目录：关闭继承；SYSTEM/Administrators 完全控制；普通用户只读（防止本地用户篡改 SYSTEM 计划任务执行的脚本与运行时）
     $acl = New-Object System.Security.AccessControl.DirectorySecurity
     $acl.SetAccessRuleProtection($true, $false)
     $inh = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'
     $none = [System.Security.AccessControl.PropagationFlags]::None
-    foreach ($id in @('NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators')) {
+    foreach ($id in @((Get-Sid 'S-1-5-18'), (Get-Sid 'S-1-5-32-544'))) {
         $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($id, 'FullControl', $inh, $none, 'Allow')))
     }
-    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule('BUILTIN\Users', 'ReadAndExecute', $inh, $none, 'Allow')))
-    foreach ($sid in @('NT SERVICE\' + $script:SvcApp, 'NT SERVICE\' + $script:SvcDb)) {
-        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'ReadAndExecute', $inh, $none, 'Allow')))
+    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule((Get-Sid 'S-1-5-32-545'), 'ReadAndExecute', $inh, $none, 'Allow')))
+    foreach ($svc in @($script:SvcApp, $script:SvcDb)) {
+        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule((Get-ServiceAccount $svc), 'ReadAndExecute', $inh, $none, 'Allow')))
     }
     Set-Acl -LiteralPath $script:Root -AclObject $acl
 }
 
 function Grant-ServiceDirs {
-    # 在根目录 ACL 基础上，为服务账户授予需要写入的目录；敏感目录关闭继承只允许指定账户
-    $appSid = 'NT SERVICE\' + $script:SvcApp
-    $dbSid = 'NT SERVICE\' + $script:SvcDb
-    Protect-Directory $script:PgData $dbSid 'Modify'
-    Protect-Directory $script:Config $appSid 'ReadAndExecute'
-    Protect-Directory (Join-Path $script:Config 'admin-only') $null 'None'
-    Protect-Directory (Join-Path $script:Data 'private') $appSid 'Modify'
-    Protect-Directory $script:Backups $null 'None'
-    foreach ($d in @($script:Data, $script:Logs)) {
-        $acl = Get-Acl -LiteralPath $d
-        foreach ($sid in @($appSid, $dbSid)) { $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'Modify', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }
-        Set-Acl -LiteralPath $d -AclObject $acl
-    }
+    # 敏感目录关闭继承，普通用户（Users）不可读：
+    #   data（含 private 报价 PDF/附件、运维日志、恢复/升级暂存）、logs（含账号与 IP）、config（含数据库密码与签名密钥）、backups
+    $app = Get-ServiceAccount $script:SvcApp
+    $db = Get-ServiceAccount $script:SvcDb
+    Protect-Directory $script:Data @(@($app, 'Modify'), @($db, 'Modify'))
+    Protect-Directory $script:PgData @(, @($db, 'Modify'))
+    Protect-Directory (Join-Path $script:Data 'private') @(, @($app, 'Modify'))
+    Protect-Directory $script:Logs @(@($app, 'Modify'), @($db, 'Modify'))
+    Protect-Directory $script:Config @(, @($app, 'ReadAndExecute'))
+    Protect-Directory (Join-Path $script:Config 'admin-only') @()
+    Protect-Directory $script:Backups @()
+    $cfgBk = (Read-AppEnv)['ISH_BACKUP_DIR']
+    if ($cfgBk -and (Test-Path -LiteralPath $cfgBk) -and ($cfgBk.TrimEnd('\') -ne $script:Backups)) { Protect-Directory $cfgBk @() }
 }
 
-function Protect-Directory([string]$path, [string]$serviceSid, [string]$right = 'Modify') {
-    # 仅 SYSTEM、Administrators 与服务账户可访问（去除继承的 Users/Everyone）
+function Protect-Directory([string]$path, [object[]]$grants = @()) {
+    # 仅 SYSTEM、Administrators 与指定服务账户可访问（去除继承的 Users/Everyone）；grants = @(@(账户, 权限), ...)
     $acl = New-Object System.Security.AccessControl.DirectorySecurity
     $acl.SetAccessRuleProtection($true, $false)
     $inh = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'
     $prop = [System.Security.AccessControl.PropagationFlags]::None
-    foreach ($id in @('NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators')) {
+    foreach ($id in @((Get-Sid 'S-1-5-18'), (Get-Sid 'S-1-5-32-544'))) {
         $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($id, 'FullControl', $inh, $prop, 'Allow')))
     }
-    if ($serviceSid -and $right -ne 'None') {
-        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($serviceSid, $right, $inh, $prop, 'Allow')))
+    foreach ($g in $grants) {
+        if ($g -and $g.Count -eq 2 -and $g[1] -ne 'None') {
+            $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($g[0], $g[1], $inh, $prop, 'Allow')))
+        }
     }
     New-Item -ItemType Directory -Force -Path $path | Out-Null
     Set-Acl -LiteralPath $path -AclObject $acl
@@ -198,17 +211,217 @@ function Protect-Directory([string]$path, [string]$serviceSid, [string]$right = 
 function Test-AsciiPath([string]$path) { return ($path -cmatch '^[\x20-\x7E]+$') }
 
 function Verify-PackageChecksums([string]$Base = $script:Root) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Base 'SHA256SUMS.txt'))) { Fail '安装包缺少 SHA256SUMS.txt，可能不完整。' 11 }
+    $bad = @(Test-PackageChecksums $Base)
+    if ($bad.Count) { Fail ("安装包校验失败（{0} 项）：`n  {1}" -f $bad.Count, (($bad | Select-Object -First 10) -join "`n  ")) 12 }
+    $n = @(Get-Content -LiteralPath (Join-Path $Base 'SHA256SUMS.txt') -Encoding UTF8 | Where-Object { $_.Trim() }).Count
+    Write-Ok "安装包校验通过（$n 个文件）"
+}
+
+# ======================================================================================
+# RC2：运维互斥锁、维护标记、日志状态机、平台层（服务/ACL）、故障注入
+# ======================================================================================
+
+# ---- 平台层：正式环境调用 Windows 服务；测试机模拟（仅当 data\ALLOW_SIMULATION 存在且设置 ISH_SIM_HOOK）----
+function Test-SimPlatform {
+    return ($env:ISH_SIM_HOOK -and (Test-Path -LiteralPath (Join-Path $script:Data 'ALLOW_SIMULATION')))
+}
+function Stop-IshService([string]$name, [int]$timeoutSec = 90) {
+    if (Test-SimPlatform) { & $env:ISH_SIM_HOOK 'stop' $name $script:Root | Out-Host; return }
+    $s = Get-Service -Name $name -ErrorAction SilentlyContinue
+    if ($null -eq $s -or $s.Status -eq 'Stopped') { return }
+    Stop-Service -Name $name -ErrorAction Stop
+    $s.WaitForStatus('Stopped', [TimeSpan]::FromSeconds($timeoutSec))
+    Write-IshLog "service stopped $name"
+}
+function Start-IshService([string]$name, [int]$timeoutSec = 90) {
+    if (Test-SimPlatform) { & $env:ISH_SIM_HOOK 'start' $name $script:Root | Out-Host; return }
+    $s = Get-Service -Name $name -ErrorAction Stop
+    if ($s.Status -ne 'Running') { Start-Service -Name $name -ErrorAction Stop; $s.WaitForStatus('Running', [TimeSpan]::FromSeconds($timeoutSec)) }
+    Write-IshLog "service started $name"
+}
+function Set-IshAcls {
+    if (Test-SimPlatform) { Write-IshLog 'ACL skipped (simulation)'; return }
+    Set-RootAcl
+    Grant-ServiceDirs
+}
+
+function Test-FaultInjection([string]$stage) {
+    # 仅测试机：ISH_FAULT_INJECT 含该阶段名 且 data\ALLOW_FAULT_INJECTION 存在
+    if (-not $env:ISH_FAULT_INJECT -and -not $env:ISH_FAULT_CRASH) { return }
+    if (-not (Test-Path -LiteralPath (Join-Path $script:Data 'ALLOW_FAULT_INJECTION'))) { return }
+    if (($env:ISH_FAULT_INJECT -split ',') -contains $stage) { throw "故障注入：$stage" }
+    if ($env:ISH_FAULT_CRASH -and (($env:ISH_FAULT_CRASH -split ',') -contains $stage)) {
+        Write-IshLog "SIMULATED CRASH at $stage"
+        [Environment]::Exit(99)   # 模拟断电/进程被杀：不执行 finally、不回滚，锁由操作系统释放
+    }
+}
+
+# ---- 全局运维锁：与 Python apps.common.opslock 共用 data\ops.lock / ops.owner.json ----
+function Enter-OpsLock([string]$task, [int]$waitSec = 0) {
+    New-Item -ItemType Directory -Force -Path $script:Data | Out-Null
+    $lockPath = Join-Path $script:Data 'ops.lock'
+    $deadline = (Get-Date).AddSeconds($waitSec)
+    while ($true) {
+        try {
+            $script:OpsHandle = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+            break
+        } catch {
+            if ((Get-Date) -ge $deadline) {
+                $o = $null
+                try { $o = Get-Content -LiteralPath (Join-Path $script:Data 'ops.owner.json') -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $o = $null }
+                $who = if ($o) { "$($o.task)（开始于 $($o.started_at)，进程 $($o.pid)）" } else { '未知任务' }
+                return $null, "另一个运维任务正在进行：$who"
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    $script:OpsToken = (New-RandomSecret 16) -replace '[^A-Za-z0-9]', 'x'
+    $info = [ordered]@{ task = $task; token = $script:OpsToken; pid = $PID; host = $env:COMPUTERNAME; started_at = (Get-Date -Format s) }
+    Write-AtomicText (Join-Path $script:Data 'ops.owner.json') ($info | ConvertTo-Json -Compress)
+    Add-Content -LiteralPath (Join-Path $script:Data 'ops.history.log') -Value (([ordered]@{ event = 'acquire'; task = $task; pid = $PID; at = (Get-Date -Format s) }) | ConvertTo-Json -Compress) -Encoding UTF8
+    $env:ISH_OPS_TOKEN = $script:OpsToken   # 子进程 manage.py 继承同一运维任务
+    Write-IshLog "ops lock acquired task=$task"
+    return $script:OpsToken, $null
+}
+function Exit-OpsLock {
+    if ($script:OpsHandle) {
+        try {
+            $owner = Join-Path $script:Data 'ops.owner.json'
+            $o = Get-Content -LiteralPath $owner -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($o.token -eq $script:OpsToken) { $o.token = ''; Write-AtomicText $owner ($o | ConvertTo-Json -Compress) }
+            Add-Content -LiteralPath (Join-Path $script:Data 'ops.history.log') -Value (([ordered]@{ event = 'release'; pid = $PID; at = (Get-Date -Format s) }) | ConvertTo-Json -Compress) -Encoding UTF8
+        } catch { Write-IshLog "ops owner update failed: $($_.Exception.Message)" }
+        $script:OpsHandle.Close(); $script:OpsHandle = $null
+        Remove-Item env:ISH_OPS_TOKEN -ErrorAction SilentlyContinue
+        Write-IshLog 'ops lock released'
+    }
+}
+function Write-AtomicText([string]$path, [string]$text) {
+    $tmp = "$path.$PID.$([guid]::NewGuid().ToString('N').Substring(0,8)).tmp"
+    [System.IO.File]::WriteAllText($tmp, $text, (New-Object System.Text.UTF8Encoding($false)))
+    Move-Item -LiteralPath $tmp -Destination $path -Force
+}
+
+# ---- 维护标记：内容 JSON {token, task, pid, at}；只能删除自己的 ----
+function Get-MaintenanceOwner {
+    $f = Join-Path $script:Data 'MAINTENANCE'
+    if (-not (Test-Path -LiteralPath $f)) { return $null }
+    try { return (Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { return [pscustomobject]@{ token = ''; task = 'legacy'; at = '' } }
+}
+function Set-Maintenance([string]$task) {
+    $cur = Get-MaintenanceOwner
+    if ($cur -and $cur.token -ne $script:OpsToken) { return "系统处于维护状态（$($cur.task) $($cur.at)），可能是上次升级/恢复失败后保持的只读状态。请先运行 06-检查系统 并按手册处理。" }
+    Write-AtomicText (Join-Path $script:Data 'MAINTENANCE') (([ordered]@{ token = $script:OpsToken; task = $task; pid = $PID; at = (Get-Date -Format s) }) | ConvertTo-Json -Compress)
+    return $null
+}
+function Clear-Maintenance {
+    $cur = Get-MaintenanceOwner
+    if ($cur -and $cur.token -eq $script:OpsToken) { Remove-Item -LiteralPath (Join-Path $script:Data 'MAINTENANCE') -Force; return $true }
+    return ($null -eq $cur)
+}
+
+# ---- 运维日志（状态机）：data\ops\<kind>-<id>.json，逐步记录，崩溃后可诊断与回退 ----
+function New-OpsJournal([string]$kind) {
+    New-Item -ItemType Directory -Force -Path $script:OpsDir | Out-Null
+    $id = (Get-Date -Format 'yyyyMMddHHmmss') + ('{0:D3}' -f ($PID % 1000))
+    $j = [ordered]@{ kind = $kind; id = $id; state = 'RUNNING'; phase = 'NEW'; steps = @(); created_at = (Get-Date -Format s); host = $env:COMPUTERNAME }
+    $script:Journal = $j
+    $script:JournalPath = Join-Path $script:OpsDir "$kind-$id.json"
+    Save-OpsJournal
+    return $id
+}
+function Read-OpsJournal([string]$kind, [string]$id) {
+    $p = Join-Path $script:OpsDir "$kind-$id.json"
+    if (-not (Test-Path -LiteralPath $p)) { Fail "找不到运维日志：$p" 60 }
+    $o = Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json
+    $h = [ordered]@{}
+    foreach ($pr in $o.PSObject.Properties) { $h[$pr.Name] = $pr.Value }
+    $h['steps'] = @($o.steps)
+    $script:Journal = $h; $script:JournalPath = $p
+    return $h
+}
+function Save-OpsJournal { Write-AtomicText $script:JournalPath ($script:Journal | ConvertTo-Json -Depth 6) }
+function Set-OpsPhase([string]$phase) { $script:Journal.phase = $phase; Save-OpsJournal; Write-Step $phase }
+function Add-OpsStep([hashtable]$step) {
+    $step['at'] = (Get-Date -Format s)
+    $script:Journal.steps = @($script:Journal.steps) + @([pscustomobject]$step)
+    Save-OpsJournal
+    Write-IshLog ("journal step " + ($step | ConvertTo-Json -Compress))
+}
+
+function Get-DbConn {
+    # 解析 app.env 的 DATABASE_URL（应用账号），供 psql 直接操作数据库（快照/改名）
+    $cfg = Read-AppEnv
+    $u = [Uri]($cfg['DATABASE_URL'] -replace '^postgres(ql)?:', 'http:')
+    $ui = $u.UserInfo.Split(':', 2)
+    return [pscustomobject]@{ User = [Uri]::UnescapeDataString($ui[0]); Password = [Uri]::UnescapeDataString($ui[1]); Port = $u.Port; Db = $u.AbsolutePath.TrimStart('/') }
+}
+function Invoke-Psql([string]$sql, [string]$db = 'postgres', [switch]$AllowFail) {
+    $c = Get-DbConn
+    $env:PGPASSWORD = $c.Password
+    try {
+        $ErrorActionPreference = 'Continue'
+        $out = & (Join-Path $script:PgBin 'psql.exe') -X -q -h 127.0.0.1 -p $c.Port -U $c.User -d $db -v ON_ERROR_STOP=1 -tAc $sql 2>&1
+        $rc = $LASTEXITCODE
+    } finally { Remove-Item env:PGPASSWORD -ErrorAction SilentlyContinue }
+    Write-IshLog "psql rc=$rc $sql"
+    if ($rc -ne 0 -and -not $AllowFail) { throw "psql 失败（$rc）：$sql`n$out" }
+    return (($out | ForEach-Object { "$_" }) -join "`n").Trim()
+}
+
+function Get-ReleaseItems([string]$base) {
+    # “发行文件”= 安装包中除 data/config/backups/logs/services 外的全部顶层项目（由 SHA256SUMS.txt 推导，加上清单本身）
+    $sums = Join-Path $base 'SHA256SUMS.txt'
+    $top = @{}
+    foreach ($line in Get-Content -LiteralPath $sums -Encoding UTF8) {
+        if (-not $line.Trim()) { continue }
+        $rel = ($line -split '  ', 2)[1]
+        $first = ($rel -split '/')[0]
+        $top[$first] = $true
+    }
+    $top['SHA256SUMS.txt'] = $true
+    foreach ($forbidden in @('data', 'config', 'backups', 'logs', 'services')) {
+        if ($top.ContainsKey($forbidden)) { throw "安装包不应包含 $forbidden（可能被篡改）" }
+    }
+    return @($top.Keys | Sort-Object)
+}
+
+function Test-PackageChecksums([string]$Base) {
+    # 与 Verify-PackageChecksums 相同，但返回错误列表而不是退出（升级/回滚中需要先回退再报错）
     $sums = Join-Path $Base 'SHA256SUMS.txt'
-    if (-not (Test-Path -LiteralPath $sums)) { Fail '安装包缺少 SHA256SUMS.txt，可能不完整。' 11 }
-    $bad = @(); $n = 0
+    if (-not (Test-Path -LiteralPath $sums)) { return @('缺少 SHA256SUMS.txt') }
+    $bad = @()
     foreach ($line in Get-Content -LiteralPath $sums -Encoding UTF8) {
         if (-not $line.Trim()) { continue }
         $hash, $rel = $line -split '  ', 2
+        if ($rel -match '(^|/)\.\.(/|$)' -or $rel.StartsWith('/') -or $rel -match '^[A-Za-z]:') { $bad += "非法路径 $rel"; continue }
         $p = Join-Path $Base ($rel -replace '/', '\')
-        $n++
         if (-not (Test-Path -LiteralPath $p)) { $bad += "缺失 $rel"; continue }
         if ((Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLower() -ne $hash) { $bad += "不一致 $rel" }
     }
-    if ($bad.Count) { Fail ("安装包校验失败（{0} 项）：`n  {1}" -f $bad.Count, (($bad | Select-Object -First 10) -join "`n  ")) 12 }
-    Write-Ok "安装包校验通过（$n 个文件）"
+    return $bad
+}
+
+function Test-SensitiveAcl {
+    # 返回问题列表：普通用户（Users/Authenticated Users/Everyone）不得对敏感目录有任何允许的访问；
+    # 不得对安装根目录、scripts、runtime、app 有写入/修改权限（SYSTEM 计划任务执行这些脚本）
+    $problems = @()
+    $lowSids = @('S-1-5-32-545', 'S-1-5-11', 'S-1-1-0')
+    $write = [System.Security.AccessControl.FileSystemRights]'Write, Modify, FullControl, CreateFiles, AppendData, Delete, ChangePermissions, TakeOwnership'
+    foreach ($d in @($script:Config, $script:Data, $script:Logs, $script:Backups, (Join-Path $script:Config 'admin-only'))) {
+        if (-not (Test-Path -LiteralPath $d)) { continue }
+        foreach ($r in (Get-Acl -LiteralPath $d).Access) {
+            try { $sid = $r.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { $sid = "$($r.IdentityReference)" }
+            if ($r.AccessControlType -eq 'Allow' -and $lowSids -contains $sid) { $problems += "$d 允许 $($r.IdentityReference) $($r.FileSystemRights)" }
+        }
+    }
+    foreach ($d in @($script:Root, (Join-Path $script:Root 'scripts'), $script:Runtime, $script:App)) {
+        if (-not (Test-Path -LiteralPath $d)) { continue }
+        foreach ($r in (Get-Acl -LiteralPath $d).Access) {
+            try { $sid = $r.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { $sid = "$($r.IdentityReference)" }
+            if ($r.AccessControlType -eq 'Allow' -and $lowSids -contains $sid -and ($r.FileSystemRights -band $write)) { $problems += "$d 允许 $($r.IdentityReference) 写入（$($r.FileSystemRights)）" }
+        }
+    }
+    return $problems
 }

@@ -10,6 +10,18 @@ param(
 )
 . (Join-Path $PSScriptRoot 'common.ps1')
 Start-Log 'install'
+$script:InstallState = $null
+function Set-InstallState([string]$phase) {
+    # data\install-state.json：记录初始化进度，中断后重复运行据此安全续做（不记录任何密码）
+    New-Item -ItemType Directory -Force -Path $Data | Out-Null
+    $script:InstallState = [ordered]@{ phase = $phase; at = (Get-Date -Format s); version = (Get-Content -LiteralPath (Join-Path $Root 'VERSION.txt') -Raw -ErrorAction SilentlyContinue) }
+    Write-AtomicText (Join-Path $Data 'install-state.json') ($script:InstallState | ConvertTo-Json -Compress)
+}
+function Get-InstallState {
+    $f = Join-Path $Data 'install-state.json'
+    if (Test-Path -LiteralPath $f) { try { return (Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json).phase } catch { return 'unknown' } }
+    return $null
+}
 
 Write-Host "工业销售管理系统 V2.1 — 局域网正式安装" -ForegroundColor White
 Write-Host "安装目录：$Root"
@@ -24,6 +36,10 @@ Assert-Admin '安装 Windows 服务、配置防火墙与目录权限'
 $synced = Test-SyncedFolder $Root
 if ($synced) { Fail "安装目录位于同步盘（$synced）。数据库目录放入同步盘会损坏数据，请解压到本地磁盘（例如 D:\IndustrialSalesHub）。" 14 }
 if ($Root.StartsWith('\\')) { Fail '不能安装在网络共享路径上，请使用本机磁盘。' 14 }
+if ($Root -match '[&<>"''%!^;`$]') {
+    # 这些字符会破坏服务 XML、批处理或 PowerShell 参数传递（即使转义，也增加现场排错难度）
+    Fail ('安装路径包含不支持的特殊字符（& < > " '' % ! ^ ; ` $）：' + $Root + "`n请解压到例如 D:\IndustrialSalesHub。") 14
+}
 if (-not (Test-AsciiPath $Root)) {
     # PostgreSQL 的 initdb/postgres 按系统 ANSI 代码页处理路径，中文路径在部分系统上会导致数据库无法启动
     Fail "安装路径包含中文或特殊字符：$Root`n请解压到纯英文路径（例如 D:\IndustrialSalesHub）。路径中可以包含空格。" 14
@@ -35,6 +51,22 @@ if ($freeGb -lt 50) { Write-Warn2 "磁盘剩余 $freeGb GB，建议预留 50 GB 
 $mem = [math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
 if ($mem -lt 4) { Write-Warn2 "内存 $mem GB，建议 8 GB。" } else { Write-Ok "内存 $mem GB" }
 Verify-PackageChecksums
+
+# 同名服务必须指向本安装目录：防止从另一个目录重复安装时“劫持”已有服务（或被已有服务劫持）
+foreach ($svc in @($SvcDb, $SvcApp)) {
+    $w = Get-CimInstance Win32_Service -Filter "Name='$svc'" -ErrorAction SilentlyContinue
+    if ($w) {
+        $expect = Join-Path $Services "$svc\$svc.exe"
+        $actual = ($w.PathName -replace '^"([^"]+)".*$', '$1').Trim()
+        if (-not $actual.Equals($expect, [StringComparison]::OrdinalIgnoreCase)) {
+            Fail "已存在同名服务 $svc，但它属于另一个安装目录：`n  $actual`n本目录：$expect`n请先在原目录运行 99-卸载服务.bat，或从原目录执行修复安装。" 18
+        }
+    }
+}
+$tok, $busy = Enter-OpsLock 'install' 0
+if (-not $tok) { Fail $busy 75 }
+$cur = Get-MaintenanceOwner
+if ($cur -and $cur.task -notlike 'install*') { Fail "系统处于维护状态（$($cur.task)），可能是升级/恢复失败后保持的只读状态。请先处理（见手册）再修复安装。" 19 }
 
 $installed = Test-Path -LiteralPath $AppEnv
 if ($installed) {
@@ -68,6 +100,9 @@ if (-not $installed) {
     $hosts = @('localhost', '127.0.0.1', $env:COMPUTERNAME) + $lan
     $scheme = if ($Https) { 'https' } else { 'http' }
     $origins = ($hosts | Where-Object { $_ -ne 'localhost' } | ForEach-Object { "${scheme}://${_}:$AppPort" }) -join ','
+    $listen = if ($Https) { "127.0.0.1:$AppPort" } else { "0.0.0.0:$AppPort" }
+    $proxyLines = if ($Https) { @('ISH_TRUST_PROXY_HEADER=1', 'ISH_TRUSTED_PROXY=127.0.0.1') } else { @() }
+    $cfgTmp = "$AppEnv.$PID.tmp"
     @(
         '# 工业销售管理系统 正式配置（自动生成）。包含数据库密码与签名密钥，仅管理员与服务账户可读。'
         'ISH_MODE=LAN'
@@ -79,7 +114,7 @@ if (-not $installed) {
         "DATA_DIR=$Data"
         "ISH_LOG_DIR=$Logs"
         "FRONTEND_DIST=$(Join-Path $App 'frontend\dist')"
-        "ISH_LISTEN=0.0.0.0:$AppPort"
+        "ISH_LISTEN=$listen"
         'ISH_THREADS=6'
         "ISH_HTTPS=$([int][bool]$Https)"
         'ISH_PROJECT_VISIBILITY=ALL'
@@ -87,7 +122,8 @@ if (-not $installed) {
         "ISH_BACKUP_DIR=$Backups"
         'ISH_BACKUP_KEEP_DAYS=30'
         'ISH_BACKUP_COPY_TO='
-    ) | Set-Content -LiteralPath $AppEnv -Encoding UTF8
+    ) + $proxyLines | Set-Content -LiteralPath $cfgTmp -Encoding UTF8
+    Move-Item -LiteralPath $cfgTmp -Destination $AppEnv -Force   # 原子生成：中断不会留下半个 app.env
     Write-Ok '已生成 config\app.env（随机密钥与数据库密码）'
     if (-not $Https) { Write-Warn2 '当前为 HTTP 隔离内网试用模式：数据在局域网中未加密传输。正式使用建议配置可信 HTTPS 反向代理（见安装手册）。' }
 }
@@ -97,14 +133,33 @@ $cfg = Read-AppEnv
 Write-Step '初始化 PostgreSQL（仅监听 127.0.0.1）'
 $dbUrl = [Uri]($cfg['DATABASE_URL'] -replace '^postgres:', 'http:')
 $dbPass = [Uri]::UnescapeDataString($dbUrl.UserInfo.Split(':', 2)[1])
+$superFile = Join-Path $AdminOnly 'postgres-superuser.txt'
+$st = Get-InstallState
+if ((Test-Path -LiteralPath (Join-Path $PgData 'PG_VERSION')) -and ($st -in @('initdb', 'dbconfig')) -and -not (Test-Path -LiteralPath $superFile)) {
+    # 上次安装在 initdb 过程中中断，且超级用户密码未保存：此时尚未建库/迁移，不可能有业务数据，安全地移开重建
+    $aside = "$PgData.incomplete-" + (Get-Date -Format 'yyyyMMddHHmmss')
+    Move-Item -LiteralPath $PgData -Destination $aside
+    Write-Warn2 "检测到上次中断的数据库初始化，已移到 $aside 并重新初始化（该目录不含业务数据，确认后可删除）"
+}
+if ((Test-Path -LiteralPath (Join-Path $PgData 'PG_VERSION')) -and -not (Test-Path -LiteralPath $superFile)) {
+    Fail "数据库目录已存在但缺少 config\admin-only\postgres-superuser.txt（安装状态 $st）。为防止误删业务数据，安装中止；请联系实施人员。" 21
+}
 if (-not (Test-Path -LiteralPath (Join-Path $PgData 'PG_VERSION'))) {
+    Set-InstallState 'initdb'
+    New-Item -ItemType Directory -Force -Path $AdminOnly | Out-Null
+    Protect-Directory $AdminOnly @()
     $super = New-RandomSecret 24
-    $pwFile = Join-Path $env:TEMP ("ish-pw-{0}.txt" -f [guid]::NewGuid())
+    # 先把超级用户密码写入仅管理员可读的位置，再 initdb：任何时刻中断都不会丢失已设置的密码
+    Set-Content -LiteralPath $superFile -Value "postgres 超级用户密码（仅运维紧急使用，勿外传）：$super" -Encoding UTF8
+    $pwFile = Join-Path $AdminOnly ("initdb-pw-{0}.txt" -f [guid]::NewGuid())
     try {
         Set-Content -LiteralPath $pwFile -Value $super -Encoding ASCII -NoNewline
+        if (Test-Path -LiteralPath $PgData) { Remove-Item -LiteralPath $PgData -Recurse -Force }   # initdb 要求目录为空（此处必为未完成的空目录）
         $rc = Invoke-Exe (Join-Path $PgBin 'initdb.exe') @('-D', $PgData, '-U', 'postgres', "--pwfile=$pwFile", '-E', 'UTF8', '--locale=C', '--auth-local=scram-sha-256', '--auth-host=scram-sha-256')
         if ($rc -ne 0) { Fail 'initdb 失败（见日志）' 21 }
     } finally { Remove-Item -LiteralPath $pwFile -Force -ErrorAction SilentlyContinue }
+    Set-InstallState 'dbconfig'
+
     @(
         "listen_addresses = '127.0.0.1'"
         "port = $DbPort"
@@ -117,9 +172,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $PgData 'PG_VERSION'))) {
         "timezone = 'Asia/Shanghai'"
     ) | Add-Content -LiteralPath (Join-Path $PgData 'postgresql.conf') -Encoding ASCII
     @('# 仅本机 scram 认证', 'host all all 127.0.0.1/32 scram-sha-256', 'host all all ::1/128 scram-sha-256') | Set-Content -LiteralPath (Join-Path $PgData 'pg_hba.conf') -Encoding ASCII
-    # 超级用户密码：写入仅管理员可读的 config\admin-only（应用服务账户不可读）
-    New-Item -ItemType Directory -Force -Path $AdminOnly | Out-Null
-    Set-Content -LiteralPath (Join-Path $AdminOnly 'postgres-superuser.txt') -Value "postgres 超级用户密码（仅运维紧急使用，勿外传）：$super" -Encoding UTF8
+    Set-InstallState 'initdb-done'
     Write-Ok '数据库目录已初始化'
 } else { Write-Ok '数据库目录已存在，跳过 initdb' }
 
@@ -153,21 +206,22 @@ function Install-Svc([string]$id, [string]$xml) {
     }
 }
 $pgExe = Join-Path $PgBin 'pg_ctl.exe'
+function X([string]$v) { return [Security.SecurityElement]::Escape($v) }   # 服务 XML 中所有路径按 XML 转义
 $dbXml = @"
 <service>
   <id>$SvcDb</id>
   <name>Industrial Sales Hub 数据库</name>
   <description>工业销售管理系统 PostgreSQL（仅本机 127.0.0.1:$DbPort）</description>
-  <executable>$(Join-Path $PgBin 'postgres.exe')</executable>
-  <arguments>-D "$PgData"</arguments>
-  <stopexecutable>$pgExe</stopexecutable>
-  <stoparguments>stop -D "$PgData" -m fast -w</stoparguments>
+  <executable>$(X (Join-Path $PgBin 'postgres.exe'))</executable>
+  <arguments>-D &quot;$(X $PgData)&quot;</arguments>
+  <stopexecutable>$(X $pgExe)</stopexecutable>
+  <stoparguments>stop -D &quot;$(X $PgData)&quot; -m fast -w</stoparguments>
   <stoptimeout>60 sec</stoptimeout>
   <startmode>Automatic</startmode>
   <onfailure action="restart" delay="10 sec"/>
   <onfailure action="restart" delay="30 sec"/>
   <resetfailure>1 hour</resetfailure>
-  <logpath>$(Join-Path $Logs 'service')</logpath>
+  <logpath>$(X (Join-Path $Logs 'service'))</logpath>
   <log mode="roll-by-size"><sizeThreshold>10240</sizeThreshold><keepFiles>8</keepFiles></log>
 </service>
 "@
@@ -176,10 +230,10 @@ $appXml = @"
   <id>$SvcApp</id>
   <name>Industrial Sales Hub 应用</name>
   <description>工业销售管理系统 Web 应用（Waitress，端口 $AppPort）</description>
-  <executable>$Python</executable>
-  <arguments>-X utf8 -B "$(Join-Path $Backend 'serve.py')"</arguments>
-  <workingdirectory>$Backend</workingdirectory>
-  <env name="ISH_CONFIG_FILE" value="$AppEnv"/>
+  <executable>$(X $Python)</executable>
+  <arguments>-X utf8 -B &quot;$(X (Join-Path $Backend 'serve.py'))&quot;</arguments>
+  <workingdirectory>$(X $Backend)</workingdirectory>
+  <env name="ISH_CONFIG_FILE" value="$(X $AppEnv)"/>
   <depend>$SvcDb</depend>
   <startmode>Automatic</startmode>
   <delayedAutoStart>true</delayedAutoStart>
@@ -188,16 +242,16 @@ $appXml = @"
   <onfailure action="restart" delay="60 sec"/>
   <resetfailure>1 hour</resetfailure>
   <stoptimeout>30 sec</stoptimeout>
-  <logpath>$(Join-Path $Logs 'service')</logpath>
+  <logpath>$(X (Join-Path $Logs 'service'))</logpath>
   <log mode="roll-by-size"><sizeThreshold>10240</sizeThreshold><keepFiles>8</keepFiles></log>
 </service>
 "@
+foreach ($x in @($dbXml, $appXml)) { [xml]$x | Out-Null }   # XML 必须可解析（路径转义校验）
 Install-Svc $SvcDb $dbXml
 Install-Svc $SvcApp $appXml
 
 Write-Step '设置目录权限（根目录普通用户只读；数据/配置/备份仅管理员与服务账户）'
-Set-RootAcl
-Grant-ServiceDirs
+Set-IshAcls
 Write-Ok '权限已设置'
 
 Write-Step '启动数据库'
@@ -223,15 +277,15 @@ try {
 } finally { Remove-Item env:PGPASSWORD -ErrorAction SilentlyContinue }
 Write-Ok '应用账号 ish_app（非超级用户）与数据库 ish 就绪'
 
+Set-InstallState 'migrate'
 Write-Step '数据库迁移'
 Invoke-Manage @('migrate', '--noinput') | Out-Null
 Write-Ok '迁移完成'
 
-Write-Step '导入三家报价出具主体配置（不导入任何客户/项目/账号）'
+Write-Step '初始化缺失的报价出具主体（create-only：已有主体与签收状态一律不改）'
 $ent = Join-Path $Root 'config-templates\entities.json'
-$entLocal = Join-Path $Config 'entities.json'
-if (Test-Path -LiteralPath $entLocal) { $ent = $entLocal }
 Invoke-Manage @('seed_entities', $ent) | Out-Null
+Write-Host '    真实主体信息（全称、税号、银行账号、条款）请由负责人在“系统设置”维护，或用 09-导入主体配置.bat（需负责人授权）。'
 
 Write-Step '初始化管理员（仅首次）'
 $hasAdmin = Invoke-Manage @('init_admin', '--check') -AllowFail
@@ -241,15 +295,20 @@ if ($hasAdmin -ne 0) {
         $AdminUser = Read-Host '请输入管理员用户名（例如 admin）'
     }
     if ($Unattended -and -not $env:ISH_INIT_ADMIN_PASSWORD) { Fail '无人值守安装需要设置环境变量 ISH_INIT_ADMIN_PASSWORD' 26 }
-    # 密码在 manage.py 中交互输入两次（不回显、不进日志）；-Unattended 时取 ISH_INIT_ADMIN_PASSWORD
-    Invoke-Manage @('init_admin', '--username', $AdminUser) | Out-Null
-} else { Write-Ok '已存在管理员，跳过' }
+    # 密码在 manage.py 中交互输入两次（不回显、不进日志）；-Unattended 时取 ISH_INIT_ADMIN_PASSWORD（只在进程环境中，用后清除）
+    try { Invoke-Manage @('init_admin', '--username', $AdminUser) | Out-Null } finally { Remove-Item env:ISH_INIT_ADMIN_PASSWORD -ErrorAction SilentlyContinue }
+} else { Write-Ok '已存在管理员，跳过（不修改任何账号与密码）' }
+Set-InstallState 'admin-ready'
 
 Write-Step '配置 Windows 防火墙（仅专用/域网络，仅应用端口）'
-$ruleName = "Industrial Sales Hub (TCP $AppPort)"
 Get-NetFirewallRule -DisplayName 'Industrial Sales Hub*' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort $AppPort -Action Allow -Profile Private, Domain -RemoteAddress $AllowedRemote | Out-Null
-Write-Ok "已放行 TCP $AppPort（远程范围：$AllowedRemote；数据库端口 $DbPort 不对外开放）"
+if ($cfg['ISH_LISTEN'] -like '127.0.0.1:*') {
+    Write-Ok "应用只监听 127.0.0.1:$AppPort（HTTPS 反向代理模式），不为应用端口开放防火墙；代理的 443 端口规则由代理安装步骤创建（见 HTTPS 手册）"
+} else {
+    $ruleName = "Industrial Sales Hub (TCP $AppPort)"
+    New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort $AppPort -Action Allow -Profile Private, Domain -RemoteAddress $AllowedRemote | Out-Null
+    Write-Ok "已放行 TCP $AppPort（远程范围：$AllowedRemote；数据库端口 $DbPort 不对外开放）"
+}
 $pub = Get-NetConnectionProfile -ErrorAction SilentlyContinue | Where-Object { $_.NetworkCategory -eq 'Public' }
 if ($pub) { Write-Warn2 ("网络 {0} 当前为「公用」类型，防火墙规则不对公用网络生效。请在 Windows 设置中改为「专用网络」，否则其他电脑无法访问。" -f (($pub | Select-Object -ExpandProperty Name) -join '、')) }
 
@@ -271,6 +330,12 @@ Set-Content -LiteralPath (Join-Path $sc '工业销售管理系统.url') -Value "
 Set-Content -LiteralPath (Join-Path $sc '访问地址.txt') -Value (@('局域网其他电脑在浏览器中打开以下任一地址（无需安装任何软件）：') + $urls + @('', '建议在路由器中为本机设置 DHCP 保留，保证 IP 不变。')) -Encoding UTF8
 Write-Ok "快捷方式：$sc"
 
+Write-Step '核对敏感目录权限（普通用户不可读）'
+$aclProblems = @(Test-SensitiveAcl)
+if ($aclProblems.Count) { Fail ("敏感目录权限不符合要求：`n  " + ($aclProblems -join "`n  ")) 27 }
+Write-Ok 'config、data、logs、backups 仅 SYSTEM/Administrators/服务账户可访问；安装根目录普通用户只读'
+Set-InstallState 'done'
+Exit-OpsLock
 Write-Host "`n安装完成。" -ForegroundColor Green
 Write-Host '局域网访问地址（以本机实际网卡为准）：' -ForegroundColor Green
 $urls | ForEach-Object { Write-Host "  $_" -ForegroundColor Green }

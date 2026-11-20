@@ -49,7 +49,8 @@ def db_exists(name, pg_bin=None):
 
 def other_sessions(name, pg_bin=None):
     """name 库上除本次 psql 外的会话数（用于确认应用已停止）。"""
-    return int(psql(f"SELECT count(*) FROM pg_stat_activity WHERE datname='{name}' AND pid <> pg_backend_pid()", pg_bin) or 0)
+    # 只统计客户端连接；autovacuum 工作进程由 PostgreSQL 在改名/删除时自行终止
+    return int(psql(f"SELECT count(*) FROM pg_stat_activity WHERE datname='{name}' AND pid <> pg_backend_pid() AND backend_type = 'client backend'", pg_bin) or 0)
 
 
 def close_django():

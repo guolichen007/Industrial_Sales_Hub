@@ -1,46 +1,86 @@
-﻿# 05-恢复备份
-#   默认（演练）：校验备份并恢复到临时数据库与临时目录，检查完整性后自动清理 —— 不影响正式数据。
-#   -Production：用备份覆盖正式数据（停止应用 → 先备份当前状态 → 恢复 → 校验 → 启动）。需输入确认短语。
-param([Parameter(Mandatory = $true)][string]$BackupPath, [switch]$Production)
+﻿# 05-恢复备份（RC2）
+#   默认（演练）：校验备份 → 恢复到临时数据库与临时目录 → 完整性检查 → 自动清理。不影响正式数据。
+#   -Production：正式恢复。停止应用 → manage.py ish_restore（staging 库 + staging 文件验证 → 改名切换 → 切换后校验，
+#                任何阶段失败自动回退）→ 目录权限 → 启动并探活；权限或启动失败时按恢复日志撤销切换。
+#   -Rollback <恢复ID>：撤销一次已完成的正式恢复（回到恢复前的数据库与文件）。
+#   -Cleanup <恢复ID>：确认恢复结果无误后，删除保留的旧数据库与旧文件。
+param([string]$BackupPath = '', [switch]$Production, [string]$Rollback = '', [string]$Cleanup = '', [switch]$Yes)
 . (Join-Path $PSScriptRoot 'common.ps1')
 Start-Log 'restore'
 Assert-CanReadConfig
 if (-not (Test-Path -LiteralPath $AppEnv)) { Fail '尚未安装' 30 }
 $cfg = Read-AppEnv
+$bdest = if ($cfg['ISH_BACKUP_DIR']) { $cfg['ISH_BACKUP_DIR'] } else { $Backups }
+
+if ($Cleanup) {
+    $rc = Invoke-Manage @('ish_restore', '--cleanup', $Cleanup, '--pg-bin', $PgBin) -AllowFail
+    exit $rc
+}
+if ($Rollback) {
+    if (-not (Test-SimPlatform)) { Assert-Admin '停止/启动服务并撤销恢复' }
+    if (-not $Yes) { if ((Read-Host "将撤销恢复 $Rollback，回到恢复前的数据。请输入「确认撤销」") -ne '确认撤销') { Write-Host '已取消'; exit 0 } }
+    Stop-IshService $SvcApp
+    $rc = Invoke-Manage @('ish_restore', '--rollback', $Rollback, '--pg-bin', $PgBin) -AllowFail
+    if ($rc -eq 0) { Set-IshAcls; Start-IshService $SvcApp; Write-Ok '已撤销恢复' }
+    exit $rc
+}
+if (-not $BackupPath) { Fail '请用 -BackupPath 指定备份目录' 30 }
 $BackupPath = (Resolve-Path -LiteralPath $BackupPath).Path
 Write-Step '校验备份'
 Invoke-Manage @('ish_verify_backup', $BackupPath) | Out-Null
+
 if (-not $Production) {
-    Write-Step '恢复演练（临时库 + 临时目录）'
-    $tmpDir = Join-Path $env:TEMP ("ish-restore-" + (Get-Date -Format 'yyyyMMddHHmmss'))
-    Invoke-Manage @('ish_verify_backup', $BackupPath, '--restore-to-db', ('ish_drill_' + (Get-Date -Format 'yyyyMMddHHmmss')), '--restore-data-dir', $tmpDir, '--pg-bin', $PgBin) | Out-Null
+    Write-Step '恢复演练（临时库 + 临时目录，不影响正式数据）'
+    $stamp = Get-Date -Format 'yyyyMMddHHmmss'
+    $tmpDir = Join-Path $Data "ops\drill-$stamp"
+    Invoke-Manage @('ish_verify_backup', $BackupPath, '--restore-to-db', ('ish_drill_' + $stamp), '--restore-data-dir', $tmpDir, '--pg-bin', $PgBin) | Out-Null
     Write-Ok '恢复演练通过；正式数据未被修改。'
     exit 0
 }
-Assert-Admin '停止/启动服务并覆盖正式数据'
-Write-Host "将用以下备份覆盖正式数据：`n  $BackupPath" -ForegroundColor Yellow
-$phrase = Read-Host '此操作会替换当前全部业务数据。请输入「确认恢复」四个字继续'
-if ($phrase -ne '确认恢复') { Write-Host '已取消'; exit 0 }
-Write-Step '先备份当前状态（以便撤销本次恢复）'
-Invoke-Manage @('ish_backup', '--dest', $cfg['ISH_BACKUP_DIR'], '--pg-bin', $PgBin, '--label', 'before-restore') | Out-Null
-Write-Step '停止应用'
-Stop-Service -Name $SvcApp
-$db = [Uri]($cfg['DATABASE_URL'] -replace '^postgres:', 'http:')
-$env:PGPASSWORD = [Uri]::UnescapeDataString($db.UserInfo.Split(':', 2)[1])
+
+if (-not (Test-SimPlatform)) { Assert-Admin '停止/启动服务并覆盖正式数据' }
+Write-Host "将用以下备份替换当前全部业务数据：`n  $BackupPath" -ForegroundColor Yellow
+Write-Host '恢复前会自动备份当前状态；旧数据库与旧文件在确认前保留，可用 -Rollback 撤销。' -ForegroundColor Yellow
+if (-not $Yes) {
+    if ((Read-Host '请输入「确认恢复」四个字继续') -ne '确认恢复') { Write-Host '已取消'; exit 0 }
+}
+$tok, $busy = Enter-OpsLock 'restore' 0
+if (-not $tok) { Fail $busy 75 }
+$exitCode = 0
 try {
-    $port = $db.Port
-    Write-Step '恢复数据库（单事务，失败则不改变任何数据）'
-    $rc = Invoke-Exe (Join-Path $PgBin 'pg_restore.exe') @('-h', '127.0.0.1', '-p', "$port", '-U', 'ish_app', '-d', 'ish', '--clean', '--if-exists', '--no-owner', '--no-privileges', '--single-transaction', '--exit-on-error', (Join-Path $BackupPath 'db.dump'))
-    if ($rc -ne 0) { Start-Service -Name $SvcApp; Fail 'pg_restore 失败，数据库未改变；应用已重新启动。' 40 }
-} finally { Remove-Item env:PGPASSWORD -ErrorAction SilentlyContinue }
-Write-Step '恢复私有文件（报价 PDF、案例、附件）'
-$priv = Join-Path $Data 'private'
-$old = "$priv.old-" + (Get-Date -Format 'yyyyMMddHHmmss')
-Rename-Item -LiteralPath $priv -NewName (Split-Path $old -Leaf)
-Copy-Item -LiteralPath (Join-Path $BackupPath 'private') -Destination $priv -Recurse
-Protect-Directory $priv ('NT SERVICE\' + $SvcApp) 'Modify'
-Write-Step '完整性校验'
-$rc = Invoke-Manage @('verify_integrity', '--expect-manifest', (Join-Path $BackupPath 'manifest.json')) -AllowFail
-if ($rc -ne 0) { Fail "恢复后完整性校验失败。原私有文件保存在 $old；可用 before-restore 备份再次恢复。" 41 }
-Start-Service -Name $SvcApp
-Write-Ok "恢复完成。原私有文件已保留在：$old（确认无误后可手工删除）"
+    $before = @(Get-ChildItem -LiteralPath $OpsDir -Filter 'restore-*.json' -ErrorAction SilentlyContinue | ForEach-Object Name)
+    Write-Step '停止应用（数据库保持运行）'
+    Stop-IshService $SvcApp
+    Write-Step '正式恢复：staging 验证 → 原子切换 → 切换后校验'
+    $rc = Invoke-Manage @('ish_restore', $BackupPath, '--confirm-production', '--pg-bin', $PgBin, '--backup-dest', $bdest) -AllowFail
+    $new = @(Get-ChildItem -LiteralPath $OpsDir -Filter 'restore-*.json' -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Name } | Sort-Object Name | Select-Object -Last 1)
+    $rid = if ($new.Count) { (Get-Content -LiteralPath $new[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json).id } else { '' }
+    if ($rc -ne 0) {
+        Write-Warn2 "恢复未执行或已自动回退（退出码 $rc）。正式数据保持恢复前状态。"
+        Start-IshService $SvcApp
+        $exitCode = 40
+    } else {
+        $ok = $true
+        try {
+            Test-FaultInjection 'restore.ps1.acl'
+            Set-IshAcls
+            Start-IshService $SvcApp
+            Test-FaultInjection 'restore.ps1.start'
+            $port = [int]($cfg['ISH_LISTEN'] -split ':')[-1]
+            if (-not (Wait-Http "http://127.0.0.1:$port/healthz" 120)) { throw '应用未能在 120 秒内就绪' }
+        } catch {
+            $ok = $false
+            Write-Warn2 "恢复后设置权限/启动失败：$($_.Exception.Message)；按恢复日志撤销切换"
+            Stop-IshService $SvcApp
+            $rc2 = Invoke-Manage @('ish_restore', '--rollback', $rid, '--pg-bin', $PgBin) -AllowFail
+            if ($rc2 -eq 0) { Set-IshAcls; Start-IshService $SvcApp; Write-Warn2 '已撤销本次恢复，系统回到恢复前状态。' } else { Write-Warn2 "撤销失败，请勿手工改动数据目录，联系实施人员（恢复 ID $rid）。" }
+            $exitCode = 41
+        }
+        if ($ok) {
+            Write-Ok "恢复完成（恢复 ID $rid）。确认业务数据无误后，可运行：05-恢复备份.bat -Cleanup $rid 删除保留的旧数据"
+        }
+    }
+} finally {
+    Exit-OpsLock
+}
+exit $exitCode
