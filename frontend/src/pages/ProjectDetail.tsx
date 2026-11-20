@@ -248,6 +248,7 @@ export default function ProjectDetail() {
                   ))}</tbody>
                 </table>
                 </div>
+                {can("order.amount") && related.orders.map((o: any) => <div key={`att-${o.id}`} style={{ marginTop: 10 }}><Attachments ownerType="order" ownerId={o.id} canUpload title={`合同/订单证据 · ${o.order_ref || o.basis_label}（仅商务与负责人可见）`} /></div>)}
               </div>
             )}
           </div>

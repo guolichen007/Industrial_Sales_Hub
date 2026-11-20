@@ -15,10 +15,12 @@ export function ProjectForm({ initial, onClose, onSaved }: { initial?: any; onCl
     presale_phase: initial?.presale_phase || "线索发现", sales_owner: initial?.sales_owner ?? (me!.role === "SALES" ? me!.id : ""), expected_amount_note: initial?.expected_amount_note || "",
   });
   const [busy, setBusy] = useState(false);
+  const [members, setMembers] = useState<number[]>(initial?.members || []);
   const save = async () => {
     setBusy(true);
     try {
       const body: any = { ...f.v, sales_owner: f.v.sales_owner || null };
+      if (can("project.edit_any")) body.members = members;
       if (!can("project.see_scale_note")) delete body.expected_amount_note;
       if (me!.role === "SALES") delete body.sales_owner;
       const p = initial ? await patch(`/projects/${initial.id}/`, body) : await post("/projects/", body);
@@ -50,6 +52,13 @@ export function ProjectForm({ initial, onClose, onSaved }: { initial?: any; onCl
             {(users || []).filter((u) => u.role === "SALES" || u.role === "LEADER").map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
           </select>
         </Field>
+        {can("project.edit_any") && (
+          <Field label="参与成员（可编辑该项目、查看项目附件）" full hint="仅商务/负责人可指派；成员不扩大业绩可见范围">
+            <div className="tagline">{(users || []).filter((u) => u.role === "SALES").map((u) => (
+              <label key={u.id} className="chk"><input type="checkbox" checked={members.includes(u.id)} onChange={(e) => setMembers(e.target.checked ? [...members, u.id] : members.filter((x) => x !== u.id))} />{u.name}</label>
+            ))}</div>
+          </Field>
+        )}
         {can("project.see_scale_note") && <Field label="预计规模（内部，仅商务/负责人可见）"><input className="input" {...f.bind("expected_amount_note")} /></Field>}
         <Field label="项目说明" full><textarea className="input textarea" {...f.bind("description")} /></Field>
       </div>

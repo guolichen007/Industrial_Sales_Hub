@@ -4,6 +4,7 @@ import { api, del, get, money, patch, post, qs } from "../api";
 import { useAuth } from "../auth";
 import { Chip, Field, Loading, Modal, PageHead, useForm, useLoad, useToast } from "../ui";
 import { ImportModal } from "./Settings";
+import { Attachments } from "./common";
 
 function CasePhotos({ perf }: { perf: any }) {
   const { notify, fail } = useToast();
@@ -95,6 +96,7 @@ function PerfForm({ initial, onClose, onSaved }: { initial?: any; onClose: () =>
         </Field>
         {can("performance.see_amount") && <Field label="内部备注" full><textarea className="input textarea" {...f.bind("remark")} /></Field>}
         {initial && <CasePhotos perf={initial} />}
+        {initial && can("performance.write") && <div className="formfield full"><Attachments ownerType="performance" ownerId={initial.id} canUpload title="业绩证明文件（内部，仅商务与负责人）" /></div>}
       </div>
     </Modal>
   );

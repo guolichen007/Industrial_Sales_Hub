@@ -47,13 +47,14 @@ function AccountForm({ initial, onClose, onSaved }: { initial?: any; onClose: ()
   );
 }
 
-function ContactForm({ account, onClose, onSaved }: { account: any; onClose: () => void; onSaved: () => void }) {
+function ContactForm({ account, initial, onClose, onSaved }: { account: any; initial?: any; onClose: () => void; onSaved: () => void }) {
   const { notify, fail } = useToast();
-  const f = useForm({ name: "", department: "", position: "", mobile: "", phone: "", email: "" });
+  const f = useForm({ name: initial?.name || "", department: initial?.department || "", position: initial?.position || "", mobile: initial?.mobile || "", phone: initial?.phone || "", email: initial?.email || "" });
   const save = async () => {
     try {
-      await post("/contacts/", { ...f.v, account: account.id });
-      notify("联系人已添加");
+      if (initial) await patch(`/contacts/${initial.id}/`, f.v);
+      else await post("/contacts/", { ...f.v, account: account.id });
+      notify(initial ? "联系人已更新" : "联系人已添加");
       onSaved();
     } catch (e) {
       f.catchErr(e);
@@ -61,7 +62,7 @@ function ContactForm({ account, onClose, onSaved }: { account: any; onClose: () 
     }
   };
   return (
-    <Modal title={`添加联系人 · ${account.name}`} onClose={onClose} foot={<><button className="btn" onClick={onClose}>取消</button><button className="btn primary" disabled={!f.v.name} onClick={save}>保存</button></>}>
+    <Modal title={`${initial ? "编辑" : "添加"}联系人 · ${account.name}`} onClose={onClose} foot={<><button className="btn" onClick={onClose}>取消</button><button className="btn primary" disabled={!f.v.name} onClick={save}>保存</button></>}>
       <div className="fieldset">
         <Field label="姓名 *"><input className="input" {...f.bind("name")} autoFocus /></Field>
         <Field label="部门"><input className="input" {...f.bind("department")} /></Field>
@@ -85,6 +86,7 @@ export default function Customers() {
   const [pf, setPf] = useState({ q: "", role: "", presale_phase: "", execution_phase: "" });
   const [sel, setSel] = useState<number | null>(null);
   const [modal, setModal] = useState("");
+  const [editContact, setEditContact] = useState<any>(null);
   const cur = (list || []).find((a) => a.id === sel) || (list || [])[0];
   const [projects] = useLoad(() => (cur ? get<any[]>(`/accounts/${cur.id}/projects/` + qs(pf)) : Promise.resolve([])), [cur?.id, pf.q, pf.role, pf.presale_phase, pf.execution_phase]);
   const addCat = async () => {
@@ -145,17 +147,19 @@ export default function Customers() {
               <h2>{cur.name}</h2>
               <div className="rowactions">
                 {can("account.write") && <button className="btn mini" onClick={() => setModal("edit")}>编辑</button>}
+                {can("account.write") && <button className="btn mini" onClick={() => patch(`/accounts/${cur.id}/`, { active: !cur.active }).then(() => (notify(cur.active ? "已停用（历史项目与报价不受影响）" : "已启用"), reload())).catch(fail)}>{cur.active ? "停用" : "启用"}</button>}
                 {can("account.delete") && <button className="btn mini warn" onClick={remove}>删除</button>}
               </div>
             </div>
             <div className="kv" style={{ marginBottom: 14 }}>
               <span>行业</span><span>{cur.industry || "—"}</span><span>地区</span><span>{cur.region || "—"}</span><span>地址</span><span>{cur.address || "—"}</span>
             </div>
-            <div className="sectionhead"><h2 style={{ fontSize: 14 }}>联系人</h2>{can("account.write") && <button className="btn mini soft" onClick={() => setModal("contact")}>+ 联系人</button>}</div>
+            <div className="sectionhead"><h2 style={{ fontSize: 14 }}>联系人</h2>{can("account.write") && <button className="btn mini soft" onClick={() => (setEditContact(null), setModal("contact"))}>+ 联系人</button>}</div>
             {cur.contacts.map((c: any) => (
               <div className="designline" key={c.id}>
                 <div className="n">{c.name.slice(0, 1)}</div>
                 <div><b style={{ fontSize: 12 }}>{c.name}</b> <span className="sub">{[c.department, c.position].filter(Boolean).join(" · ")}</span><div className="micro">{[c.mobile, c.phone, c.email].filter(Boolean).join(" / ")}</div></div>
+                {can("account.write") && <button className="btn mini" onClick={() => (setEditContact(c), setModal("contact"))}>编辑</button>}
               </div>
             ))}
             {cur.contacts.length === 0 && <div className="sub">暂无联系人</div>}
@@ -178,7 +182,7 @@ export default function Customers() {
       </div>
       {modal === "new" && <AccountForm onClose={() => setModal("")} onSaved={() => (setModal(""), reload())} />}
       {modal === "edit" && cur && <AccountForm initial={cur} onClose={() => setModal("")} onSaved={() => (setModal(""), reload())} />}
-      {modal === "contact" && cur && <ContactForm account={cur} onClose={() => setModal("")} onSaved={() => (setModal(""), reload())} />}
+      {modal === "contact" && cur && <ContactForm account={cur} initial={editContact} onClose={() => setModal("")} onSaved={() => (setModal(""), reload())} />}
     </>
   );
 }
