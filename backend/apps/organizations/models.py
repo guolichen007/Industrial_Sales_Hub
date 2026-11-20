@@ -91,6 +91,17 @@ class TemplateSignoff(models.Model):
         ordering = ["-signed_at", "-id"]
 
 
+class AccountCategory(models.Model):
+    """客户自定义类别（负责人/商务维护，如“重点主机厂”“港口集团”）。与“业务身份”（主机厂/业主…）相互独立。"""
+
+    name = models.CharField("类别名称", max_length=30, unique=True)
+    sort = models.IntegerField(default=0)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["sort", "id"]
+
+
 class Account(models.Model):
     """客户组织。一个组织可有多个业务身份（主机厂/业主/投资方……）。"""
 
@@ -101,6 +112,7 @@ class Account(models.Model):
     region = models.CharField("地区", max_length=60, blank=True)
     address = models.CharField("地址", max_length=200, blank=True)
     remark = models.TextField("备注", blank=True)
+    categories = models.ManyToManyField(AccountCategory, blank=True, related_name="accounts", verbose_name="客户类别")
     active = models.BooleanField(default=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)

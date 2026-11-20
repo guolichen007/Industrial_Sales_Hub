@@ -59,7 +59,10 @@ export default function Performance() {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [year, setYear] = useState("");
-  const [list, reload, loading, err, st] = useLoad(() => get<any[]>("/performances/" + qs({ q, status, year })), [q, status, year]);
+  const [fx, setFx] = useState({ industry: "", machine_type: "", region: "", source: "", year_from: "", year_to: "" });
+  const filters = { q, status, year, ...fx };
+  const [facets] = useLoad(() => get<any>("/performances/facets/"), []);
+  const [list, reload, loading, err, st] = useLoad(() => get<any[]>("/performances/" + qs(filters)), [q, status, year, fx.industry, fx.machine_type, fx.region, fx.source, fx.year_from, fx.year_to]);
   const [stats, reloadStats] = useLoad(() => get("/performances/stats/"), []);
   const [modal, setModal] = useState<any>(null);
   const refresh = () => (reload(), reloadStats());
@@ -82,6 +85,7 @@ export default function Performance() {
   return (
     <>
       <PageHead k="PERFORMANCE LEDGER" title="业绩台账" sub={seeAmt ? "订单确认自动生成 + 历史手工补录/导入（待核实→负责人确认）" : me!.role === "SALES" ? "我的业绩（按负责/参与归属授权，不含内部金额）" : "业绩安全视图（不含内部金额）"}>
+        {can("performance.export") && <a className="btn" href={"/api/performances/export/" + qs(filters)} title={seeAmt ? "按当前筛选导出（含内部金额，导出写审计）" : "按当前筛选导出（不含内部金额）"}>导出 Excel</a>}
         {can("import.run") && <button className="btn" onClick={() => setModal("import")}>Excel 导入历史业绩</button>}
         {can("performance.write") && <button className="btn primary" onClick={() => setModal("new")}>+ 手工补录</button>}
       </PageHead>
@@ -96,7 +100,13 @@ export default function Performance() {
       <div className="toolbar">
         <input className="input" placeholder="搜索名称、产品、地区、主机厂、业主" value={q} onChange={(e) => setQ(e.target.value)} />
         <select className="select" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">全部状态</option><option value="PENDING">待核实</option><option value="CONFIRMED">已确认</option><option value="REVOKED">已撤销</option></select>
-        <input className="input" style={{ width: 110 }} placeholder="年份" value={year} onChange={(e) => setYear(e.target.value)} />
+        <input className="input" style={{ width: 90 }} placeholder="年份" value={year} onChange={(e) => setYear(e.target.value)} />
+        <input className="input" style={{ width: 90 }} placeholder="起始年" value={fx.year_from} onChange={(e) => setFx({ ...fx, year_from: e.target.value.replace(/\D/g, "") })} />
+        <input className="input" style={{ width: 90 }} placeholder="截止年" value={fx.year_to} onChange={(e) => setFx({ ...fx, year_to: e.target.value.replace(/\D/g, "") })} />
+        <select className="select" value={fx.industry} onChange={(e) => setFx({ ...fx, industry: e.target.value })}><option value="">全部行业</option>{(facets?.industry || []).map((x: string) => <option key={x}>{x}</option>)}</select>
+        <select className="select" value={fx.machine_type} onChange={(e) => setFx({ ...fx, machine_type: e.target.value })}><option value="">全部主机类型</option>{(facets?.machine_type || []).map((x: string) => <option key={x}>{x}</option>)}</select>
+        <select className="select" value={fx.region} onChange={(e) => setFx({ ...fx, region: e.target.value })}><option value="">全部地区</option>{(facets?.region || []).map((x: string) => <option key={x}>{x}</option>)}</select>
+        <select className="select" value={fx.source} onChange={(e) => setFx({ ...fx, source: e.target.value })}><option value="">全部来源</option><option value="ORDER">订单确认</option><option value="MANUAL">手工补录</option><option value="IMPORT">Excel 导入</option></select>
       </div>
       <div className="card">
         {loading && !list ? <Loading err={err} status={st} /> : (

@@ -166,7 +166,7 @@ export default function ProjectDetail() {
   };
   const done = p.milestones.filter((m: any) => m.state === "DONE" || m.state === "SKIPPED").length;
   const tabs: [string, string][] = [["overview", "项目全景"], ["presale", "售前跟进"], ["execution", "合同执行"]];
-  if (editable) tabs.push(["files", "附件"]);
+  if (editable || can("project.read")) tabs.push(["files", editable ? "附件" : "交付文件"]);
   return (
     <>
       <div className="detailbanner">
@@ -336,7 +336,7 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      {tab === "files" && editable && <div className="card cardpad"><Attachments ownerType="project" ownerId={pid} canUpload title="项目附件（仅项目负责/参与人员与商务可见）" /></div>}
+      {tab === "files" && <div className="card cardpad"><Attachments ownerType="project" ownerId={pid} canUpload={editable} title={editable ? "项目附件（默认内部；“交付/进度”附件可由商务/负责人授权销售可见）" : "交付/进度文件（经商务或负责人授权可见）"} /></div>}
 
       {modal === "edit" && <ProjectForm initial={p} onClose={() => setModal("")} onSaved={() => (setModal(""), refresh())} />}
       {modal === "party" && <PartyModal projectId={pid} onClose={() => setModal("")} onSaved={() => (setModal(""), refresh())} />}

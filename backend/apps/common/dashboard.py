@@ -45,12 +45,21 @@ class DashboardView(APIView):
             data["quote_count"] = Quote.objects.count()
             data["quotes_open"] = Quote.objects.filter(status__in=["GENERATED", "SENT"]).count()
             data["quotes_draft"] = Quote.objects.filter(revisions__status="DRAFT").distinct().count()
-            soon = []
-            for r in QuoteRevision.objects.filter(status="GENERATED", quote__status__in=["GENERATED", "SENT"]).select_related("quote__project"):
+            soon, overdue = [], []
+            latest = {}
+            for r in QuoteRevision.objects.filter(quote__status__in=["GENERATED", "SENT"]).order_by("quote_id", "version").select_related("quote__project"):
+                latest[r.quote_id] = r  # 每份报价只看最新版本
+            for r in latest.values():
+                if r.status != "GENERATED":
+                    continue
                 until = r.quote_date + timedelta(days=r.valid_days)
-                if today <= until <= today + timedelta(days=7) and r.version == r.quote.revisions.order_by("-version").first().version:
-                    soon.append({"quote_id": r.quote_id, "code": r.code, "project_name": r.quote.project.name, "valid_until": until})
-            data["quotes_expiring"] = soon[:8]
+                item = {"quote_id": r.quote_id, "code": r.code, "project_name": r.quote.project.name, "valid_until": until, "trial": r.is_trial}
+                if today <= until <= today + timedelta(days=7):
+                    soon.append(item)
+                elif until < today and r.quote.status == "SENT":
+                    overdue.append(item)  # RC2：已过有效期但仍为“已发送”，提示跟进或更新状态
+            data["quotes_expiring"] = sorted(soon, key=lambda x: x["valid_until"])[:8]
+            data["quotes_overdue"] = sorted(overdue, key=lambda x: x["valid_until"])[:8]
         from apps.performances.models import Performance
 
         if role_of(u) == "SALES":

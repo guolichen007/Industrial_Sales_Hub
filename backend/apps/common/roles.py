@@ -33,6 +33,8 @@ CAP = {
     "account.read": BUSINESS,
     "account.write": {LEADER, ASSISTANT, SALES},
     "account.delete": {LEADER},
+    "account.category": {LEADER, ASSISTANT},  # RC2：客户自定义类别字典
+    "performance.export": {LEADER, ASSISTANT, FINANCE, SALES},  # RC2：按各自可见范围与字段白名单导出内部 Excel
     # ---- 项目 ----
     "project.read": BUSINESS,  # 管理员（技术角色）默认不浏览业务项目
     "project.create": {LEADER, ASSISTANT, SALES},

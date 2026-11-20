@@ -204,6 +204,14 @@ export default function Dashboard() {
             ))}
             {(d.quotes_expiring || []).length === 0 && <div className="sub">7 天内没有到期的报价</div>}
           </div>
+          {(d.quotes_overdue || []).length > 0 && (
+            <div className="card cardpad">
+              <div className="sectionhead"><h2>已过有效期仍为“已发送”</h2></div>
+              {d.quotes_overdue.map((q: any) => (
+                <div className="designline" key={q.code}><span className="chip red">{dt(q.valid_until)}</span><div><Link to={`/quotes/${q.quote_id}`}><b style={{ fontSize: 12 }}>{q.code}</b></Link><div className="sub">{q.project_name} · 请跟进或更新报价状态</div></div></div>
+              ))}
+            </div>
+          )}
           <Alerts d={d} title={leader ? "异常项目（延期/逾期节点）" : "执行提醒"} />
         </div>
       </div>

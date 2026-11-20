@@ -6,6 +6,7 @@ from django.utils import timezone
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.audit.service import audit
 from apps.common.errors import BusinessError
@@ -379,3 +380,36 @@ def quote_summary_for(user, project):
                     "latest_version": r.version if r else None, "total_gross": str(r.total_gross) if r else None,
                     "frozen_revisions": [{"id": x.id, "version": x.version} for x in q.revisions.order_by("version") if x.status == QuoteRevision.GENERATED], "updated_at": q.updated_at})
     return out
+
+
+class PriceHistoryView(APIView):
+    """历史价格组合查询（RC2）：只查已生成（冻结）且非试用的报价行；按型号/名称、客户、出具主体、项目、日期区间组合筛选。
+    仅 LEADER/ASSISTANT（D2：销售、财务、管理员 403）。"""
+
+    permission_classes = [HasCap.of("quote.access")]
+
+    def get(self, request):
+        p = request.query_params
+        qs = QuoteLine.objects.filter(revision__status=QuoteRevision.GENERATED, revision__is_trial=False).select_related("revision__quote__recipient", "revision__quote__legal_entity", "revision__quote__project")
+        if v := p.get("model"):
+            v = str_param(v, "model", 80)
+            qs = qs.filter(Q(model__icontains=v) | Q(name__icontains=v))
+        if (v := int_param(p.get("product"), "product")) is not None:
+            qs = qs.filter(product_id=v)
+        for f, lookup in (("recipient", "revision__quote__recipient_id"), ("legal_entity", "revision__quote__legal_entity_id"), ("project", "revision__quote__project_id")):
+            if (v := int_param(p.get(f), f)) is not None:
+                qs = qs.filter(**{lookup: v})
+        for f, lookup in (("date_from", "revision__quote_date__gte"), ("date_to", "revision__quote_date__lte")):
+            if d := p.get(f):
+                try:
+                    qs = qs.filter(**{lookup: timezone.datetime.fromisoformat(d).date()})
+                except ValueError:
+                    raise serializers.ValidationError({f: "日期格式应为 YYYY-MM-DD"})
+        rows = []
+        for ln in qs.order_by("-revision__quote_date", "-id")[:500]:
+            r = ln.revision
+            rows.append({"quote_id": r.quote_id, "code": r.code, "quote_date": r.quote_date, "quote_status": r.quote.get_status_display(), "recipient_name": r.quote.recipient.name,
+                         "legal_entity_name": r.quote.legal_entity.short_name, "project_name": r.quote.project.name, "model": ln.model, "name": ln.name, "unit": ln.unit,
+                         "qty": str(ln.qty), "multiplier": str(ln.multiplier), "unit_price": str(ln.unit_price), "price_basis": r.price_basis, "tax_rate": str(ln.tax_rate),
+                         "discount_rate": str(ln.discount_rate), "line_net": str(ln.line_net), "line_gross": str(ln.line_gross)})
+        return Response(rows)

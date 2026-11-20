@@ -117,7 +117,10 @@ def test_d7_project_attachments_not_visible_to_non_editors(client_for, base, set
     settings.PROJECT_VISIBILITY = "ALL"
     r = client_for("sales2").post("/api/attachments/", {"owner_type": "project", "owner_id": base["p_other"].id, "file": SimpleUploadedFile("图纸.png", b"\x89PNG....")}, format="multipart")
     assert r.status_code == 201
-    assert client_for("sales").get(f"/api/attachments/?owner_type=project&owner_id={base['p_other'].id}").status_code == 403
+    # RC2 变更说明：可见但不可编辑的项目，列表接口返回 200 且**只含**显式授权“销售可见”的交付附件（此处为空），
+    # 不再整体 403（否则授权的交付文件无法提供）。未授权附件的内容与直链仍然 403。
+    lst = client_for("sales").get(f"/api/attachments/?owner_type=project&owner_id={base['p_other'].id}")
+    assert lst.status_code == 200 and lst.json() == []
     assert client_for("sales").get(f"/api/attachments/{r.json()['id']}/download/").status_code == 403
 
 

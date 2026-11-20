@@ -312,6 +312,59 @@ with sync_playwright() as pw:
     s, perf2 = api(p3, "GET", "/performances/")
     check("其他销售看不到该业绩", perf2 == [])
 
+    # ---------- RC2-R3：附件分型（真实浏览器上传 + 两个独立账号） ----------
+    def upload(page, owner_type, owner_id, name, klass=None):
+        js = """async ([ot, oid, name, klass]) => {
+          const c = document.cookie.match(/csrftoken=([^;]+)/);
+          const fd = new FormData(); fd.append('owner_type', ot); fd.append('owner_id', String(oid));
+          if (klass) fd.append('klass', klass);
+          const png = new Uint8Array([0x89,0x50,0x4E,0x47,0,0,0,0]);
+          fd.append('file', new File([png], name, {type: 'image/png'}));
+          const r = await fetch('/api/attachments/', {method: 'POST', body: fd, headers: {'X-CSRFToken': c ? c[1] : ''}, credentials: 'same-origin'});
+          let d = null; try { d = await r.json(); } catch (e) {}
+          return [r.status, d];
+        }"""
+        return page.evaluate(js, [owner_type, owner_id, name, klass])
+    s, internal = upload(pas, "project", pid, "内部比价.png")
+    s2, delivery = upload(pas, "project", pid, "发货通知.png", "DELIVERY")
+    check("商务上传内部附件与交付附件", s == 201 and s2 == 201 and internal["klass"] == "INTERNAL" and delivery["klass"] == "DELIVERY", (s, s2))
+    s, lst = api(p3, "GET", f"/attachments/?owner_type=project&owner_id={pid}")
+    check("未授权前：其他销售看不到任何项目附件", s == 200 and lst == [], (s, lst))
+    s, _ = api(p3, "PATCH", f"/attachments/{delivery['id']}/", {"sales_visible": True})
+    check("销售不能自行授权“销售可见”", s == 403, s)
+    s, d = api(pas, "PATCH", f"/attachments/{internal['id']}/", {"sales_visible": True})
+    check("内部附件不能授权给销售（409）", s == 409, s)
+    s, _ = api(pas, "PATCH", f"/attachments/{delivery['id']}/", {"sales_visible": True})
+    s, lst = api(p3, "GET", f"/attachments/?owner_type=project&owner_id={pid}")
+    r_ok = p3.request.get(f"{BASE}/api/attachments/{delivery['id']}/download/")
+    r_no = p3.request.get(f"{BASE}/api/attachments/{internal['id']}/download/")
+    check("授权后：其他销售只看到并可下载交付附件，内部附件直链 403", [x["id"] for x in lst] == [delivery["id"]] and r_ok.status == 200 and r_no.status == 403, (lst, r_ok.status, r_no.status))
+    p3.goto(f"{BASE}/projects/{pid}")
+    p3.wait_for_selector(".detailbanner")
+    p3.click(".tabbar >> text=交付文件")
+    p3.wait_for_selector("text=发货通知.png")
+    check("销售页面“交付文件”页签显示授权文件且无内部文件", "内部比价" not in p3.inner_text("body"))
+    s, qa = upload(pas, "quote", qids[0], "技术方案.png")
+    s2, _ = api(p3, "GET", f"/attachments/?owner_type=quote&owner_id={qids[0]}")
+    s3, _ = api(pf, "GET", f"/attachments/?owner_type=quote&owner_id={qids[0]}")
+    check("报价附件：商务可上传，销售/财务 403", s == 201 and s2 == 403 and s3 == 403, (s, s2, s3))
+    # 历史价格（商务页面）+ 销售 403
+    pas.goto(f"{BASE}/quotes")
+    pas.click("text=历史价格查询")
+    pas.wait_for_selector("text=LUB-320")
+    s, _ = api(ps, "GET", "/quote-lines/history/")
+    check("历史价格查询：商务可见、销售 403", s == 403, s)
+    # 业绩导出：负责人含金额列，销售不含
+    rl = pl.request.get(f"{BASE}/api/performances/export/")
+    rs = ps.request.get(f"{BASE}/api/performances/export/")
+    import io as _io
+
+    from openpyxl import load_workbook as _lw
+
+    hl = [c.value for c in next(_lw(_io.BytesIO(rl.body())).active.iter_rows())]
+    hs = [c.value for c in next(_lw(_io.BytesIO(rs.body())).active.iter_rows())]
+    check("业绩 Excel 导出：负责人含内部金额列，销售不含", rl.status == 200 and rs.status == 200 and "内部金额" in hl and "内部金额" not in hs, (hl, hs))
+
     # ---------- 匿名 ----------
     can_ = new()
     pz = can_.new_page()

@@ -18,6 +18,7 @@ from apps.quotations import views as quo
 router = DefaultRouter(trailing_slash=True)
 router.register("users", acc.UserViewSet, basename="user")
 router.register("legal-entities", org.LegalEntityViewSet, basename="legal-entity")
+router.register("account-categories", org.AccountCategoryViewSet, basename="account-category")
 router.register("accounts", org.AccountViewSet, basename="account")
 router.register("contacts", org.ContactViewSet, basename="contact")
 router.register("product-categories", prod.CategoryViewSet, basename="category")
@@ -64,8 +65,10 @@ api = [
     path("user-options/", acc.UserOptionsView.as_view()),
     path("dashboard/", DashboardView.as_view()),
     path("case-preview/", perf.CasePreviewView.as_view()),
+    path("quote-lines/history/", quo.PriceHistoryView.as_view()),
     path("attachments/", files.AttachmentListView.as_view()),
     path("attachments/<int:pk>/download/", files.AttachmentDownloadView.as_view()),
+    path("attachments/<int:pk>/", files.AttachmentDetailView.as_view()),
     path("import-batches/template/<str:kind>/", imports.TemplateView.as_view()),
     path("import-batches/preview/", imports.PreviewView.as_view()),
     path("import-batches/<int:pk>/commit/", imports.CommitView.as_view()),

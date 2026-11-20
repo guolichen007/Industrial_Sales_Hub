@@ -2,18 +2,20 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { del, get, patch, post, qs } from "../api";
 import { useAuth } from "../auth";
-import { PARTY_ROLES } from "../options";
+import { EXECUTION_PHASES, PARTY_ROLES, PRESALE_PHASES } from "../options";
 import { Field, Loading, Modal, PageHead, useForm, useLoad, useToast } from "../ui";
 
 function AccountForm({ initial, onClose, onSaved }: { initial?: any; onClose: () => void; onSaved: () => void }) {
   const { notify, fail } = useToast();
   const f = useForm({ name: initial?.name || "", industry: initial?.industry || "", region: initial?.region || "", address: initial?.address || "", remark: initial?.remark || "" });
   const [kinds, setKinds] = useState<string[]>(initial?.kinds || []);
+  const [cats, setCats] = useState<number[]>(initial?.categories || []);
+  const [allCats] = useLoad(() => get<any[]>("/account-categories/"), []);
   const [dups] = useLoad(() => (f.v.name.length >= 2 ? get<any[]>("/accounts/check-duplicate/" + qs({ name: f.v.name, exclude: initial?.id })) : Promise.resolve([])), [f.v.name]);
   const save = async () => {
     try {
-      if (initial) await patch(`/accounts/${initial.id}/`, { ...f.v, kinds });
-      else await post("/accounts/", { ...f.v, kinds });
+      if (initial) await patch(`/accounts/${initial.id}/`, { ...f.v, kinds, categories: cats });
+      else await post("/accounts/", { ...f.v, kinds, categories: cats });
       notify("客户已保存");
       onSaved();
     } catch (e) {
@@ -30,6 +32,11 @@ function AccountForm({ initial, onClose, onSaved }: { initial?: any; onClose: ()
           <div className="tagline">{PARTY_ROLES.map((k) => (
             <label key={k} className="chk"><input type="checkbox" checked={kinds.includes(k)} onChange={(e) => setKinds(e.target.checked ? [...kinds, k] : kinds.filter((x) => x !== k))} />{k}</label>
           ))}</div>
+        </Field>
+        <Field label="客户类别（自定义，可多选）" full hint="类别由负责人/商务在下方“客户类别”中维护">
+          <div className="tagline">{(allCats || []).filter((c) => c.active).map((c) => (
+            <label key={c.id} className="chk"><input type="checkbox" checked={cats.includes(c.id)} onChange={(e) => setCats(e.target.checked ? [...cats, c.id] : cats.filter((x) => x !== c.id))} />{c.name}</label>
+          ))}{allCats && allCats.length === 0 && <span className="micro">暂无类别</span>}</div>
         </Field>
         <Field label="行业"><input className="input" {...f.bind("industry")} /></Field>
         <Field label="地区"><input className="input" {...f.bind("region")} /></Field>
@@ -72,11 +79,24 @@ export default function Customers() {
   const { notify, fail } = useToast();
   const [q, setQ] = useState("");
   const [kind, setKind] = useState("");
-  const [list, reload, loading, err] = useLoad(() => get<any[]>("/accounts/" + qs({ q, kind })), [q, kind]);
+  const [category, setCategory] = useState("");
+  const [cats, reloadCats] = useLoad(() => get<any[]>("/account-categories/"), []);
+  const [list, reload, loading, err] = useLoad(() => get<any[]>("/accounts/" + qs({ q, kind, category })), [q, kind, category]);
+  const [pf, setPf] = useState({ q: "", role: "", presale_phase: "", execution_phase: "" });
   const [sel, setSel] = useState<number | null>(null);
   const [modal, setModal] = useState("");
   const cur = (list || []).find((a) => a.id === sel) || (list || [])[0];
-  const [projects] = useLoad(() => (cur ? get<any[]>(`/accounts/${cur.id}/projects/`) : Promise.resolve([])), [cur?.id]);
+  const [projects] = useLoad(() => (cur ? get<any[]>(`/accounts/${cur.id}/projects/` + qs(pf)) : Promise.resolve([])), [cur?.id, pf.q, pf.role, pf.presale_phase, pf.execution_phase]);
+  const addCat = async () => {
+    const name = prompt("新的客户类别名称（如：重点主机厂、港口集团）");
+    if (!name) return;
+    try {
+      await post("/account-categories/", { name });
+      reloadCats();
+    } catch (e) {
+      fail(e);
+    }
+  };
   const remove = async () => {
     if (!cur || !confirm(`删除客户「${cur.name}」？被项目或报价引用的客户不能删除。`)) return;
     try {
@@ -96,6 +116,8 @@ export default function Customers() {
       <div className="toolbar">
         <input className="input" placeholder="搜索名称、联系人、地区" value={q} onChange={(e) => setQ(e.target.value)} />
         <select className="select" value={kind} onChange={(e) => setKind(e.target.value)}><option value="">全部身份</option>{PARTY_ROLES.map((k) => <option key={k}>{k}</option>)}</select>
+        <select className="select" value={category} onChange={(e) => setCategory(e.target.value)}><option value="">全部类别</option>{(cats || []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+        {can("account.category") && <button className="btn mini soft" onClick={addCat}>+ 客户类别</button>}
       </div>
       <div className="split">
         <div className="card">
@@ -107,7 +129,7 @@ export default function Customers() {
                   {(list || []).map((a) => (
                     <tr key={a.id} onClick={() => setSel(a.id)} style={{ cursor: "pointer", background: cur?.id === a.id ? "#f2faf8" : undefined }}>
                       <td><span className="link">{a.name}</span></td>
-                      <td>{a.kinds.map((k: string) => <span key={k} className="chip blue" style={{ marginRight: 4 }}>{k}</span>)}</td>
+                      <td>{a.kinds.map((k: string) => <span key={k} className="chip blue" style={{ marginRight: 4 }}>{k}</span>)}{(a.category_names || []).map((k: string) => <span key={k} className="chip" style={{ marginRight: 4 }}>{k}</span>)}</td>
                       <td>{a.region || "—"}</td><td>{a.contacts.length}</td><td>{a.project_count}</td>
                     </tr>
                   ))}
@@ -137,11 +159,17 @@ export default function Customers() {
               </div>
             ))}
             {cur.contacts.length === 0 && <div className="sub">暂无联系人</div>}
-            <div className="sectionhead" style={{ marginTop: 16 }}><h2 style={{ fontSize: 14 }}>关联项目</h2></div>
+            <div className="sectionhead" style={{ marginTop: 16 }}><h2 style={{ fontSize: 14 }}>关联项目（{(projects || []).length}）</h2></div>
+            <div className="toolbar" style={{ marginBottom: 6 }}>
+              <input className="input" placeholder="项目名称/编号" value={pf.q} onChange={(e) => setPf({ ...pf, q: e.target.value })} style={{ width: 130 }} />
+              <select className="select" value={pf.role} onChange={(e) => setPf({ ...pf, role: e.target.value })}><option value="">全部身份</option>{PARTY_ROLES.map((k) => <option key={k}>{k}</option>)}</select>
+              <select className="select" value={pf.presale_phase} onChange={(e) => setPf({ ...pf, presale_phase: e.target.value })}><option value="">售前阶段</option>{PRESALE_PHASES.map((k) => <option key={k}>{k}</option>)}</select>
+              <select className="select" value={pf.execution_phase} onChange={(e) => setPf({ ...pf, execution_phase: e.target.value })}><option value="">执行阶段</option>{EXECUTION_PHASES.map((k) => <option key={k}>{k}</option>)}</select>
+            </div>
             {(projects || []).map((p) => (
               <div className="designline" key={p.id}>
                 <span className="chip blue">{p.roles.join("、")}</span>
-                <div><Link to={`/projects/${p.id}`}><b style={{ fontSize: 12 }}>{p.name}</b></Link><div className="micro">{p.code} · {p.presale_phase} · {p.execution_phase}</div></div>
+                <div><Link to={`/projects/${p.id}`}><b style={{ fontSize: 12 }}>{p.name}</b></Link><div className="micro">{p.code} · {p.presale_phase} · {p.execution_phase}{p.sales_owner_name && ` · ${p.sales_owner_name}`}</div></div>
               </div>
             ))}
             {projects && projects.length === 0 && <div className="sub">暂无（或不在您的可见范围内）</div>}

@@ -8,7 +8,9 @@ export default function Cases() {
   const { notify, fail } = useToast();
   const [q, setQ] = useState("");
   const [year, setYear] = useState("");
-  const [cands, , loading, err, status] = useLoad(() => get<any[]>("/public-cases/" + qs({ q, year })), [q, year]);
+  const [fx, setFx] = useState({ industry: "", machine_type: "", region: "", product: "" });
+  const [facets] = useLoad(() => get<any>("/public-cases/?facets=1"), []);
+  const [cands, , loading, err, status] = useLoad(() => get<any[]>("/public-cases/" + qs({ q, year, ...fx })), [q, year, fx.industry, fx.machine_type, fx.region, fx.product]);
   const [ents] = useLoad(() => get<any[]>("/legal-entities/"), []);
   const [releases, reloadRel] = useLoad(() => get<any[]>("/case-releases/"), []);
   const [sel, setSel] = useState<number[]>([]);
@@ -51,6 +53,10 @@ export default function Cases() {
       <div className="toolbar">
         <input className="input" placeholder="搜索案例名称、产品、地区、行业、主机类型" value={q} onChange={(e) => setQ(e.target.value)} />
         <input className="input" style={{ width: 110 }} placeholder="年份" value={year} onChange={(e) => setYear(e.target.value.replace(/\D/g, ""))} />
+        <select className="select" value={fx.industry} onChange={(e) => setFx({ ...fx, industry: e.target.value })}><option value="">全部行业</option>{(facets?.industry || []).map((x: string) => <option key={x}>{x}</option>)}</select>
+        <select className="select" value={fx.machine_type} onChange={(e) => setFx({ ...fx, machine_type: e.target.value })}><option value="">全部主机类型</option>{(facets?.machine_type || []).map((x: string) => <option key={x}>{x}</option>)}</select>
+        <select className="select" value={fx.region} onChange={(e) => setFx({ ...fx, region: e.target.value })}><option value="">全部地区</option>{(facets?.region || []).map((x: string) => <option key={x}>{x}</option>)}</select>
+        <input className="input" style={{ width: 120 }} placeholder="供货产品" value={fx.product} onChange={(e) => setFx({ ...fx, product: e.target.value })} />
       </div>
       <div className="split">
         <div className="card cardpad">
@@ -101,6 +107,7 @@ export default function Cases() {
                   <td>{r.withdrawn ? <span className="chip red" title={r.withdrawn_reason}>已撤回</span> : <span className="chip">有效</span>}</td>
                   <td className="rowactions">
                     {!r.withdrawn && <a className="btn mini" href={`/api/case-releases/${r.id}/pdf/`}>下载</a>}
+                    {!r.withdrawn && <button className="btn mini" title="把这本案例册的案例组合重新勾选（常用组合复用）" onClick={() => (setSel(r.performance_ids), setTitle(r.title))}>以此册再选</button>}
                     {!r.withdrawn && can("case.withdraw") && <button className="btn mini warn" onClick={() => withdraw(r)}>撤回</button>}
                   </td></tr>
               ))}

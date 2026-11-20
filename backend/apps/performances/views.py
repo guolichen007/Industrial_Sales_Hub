@@ -61,12 +61,80 @@ class PerformanceViewSet(viewsets.ModelViewSet):
             qs = qs.filter(Q(title__icontains=q) | Q(product_summary__icontains=q) | Q(region__icontains=q) | Q(host_maker__icontains=q) | Q(owner_org__icontains=q) | Q(investor__icontains=q))
         if (y := int_param(p.get("year"), "year")) is not None:
             qs = qs.filter(year=y)
+        if (y := int_param(p.get("year_from"), "year_from")) is not None:
+            qs = qs.filter(year__gte=y)
+        if (y := int_param(p.get("year_to"), "year_to")) is not None:
+            qs = qs.filter(year__lte=y)
         for f in ("status", "source", "industry", "machine_type"):
             if v := p.get(f):
                 qs = qs.filter(**{f: str_param(v, f, 40)})
+        if v := p.get("region"):
+            qs = qs.filter(region__icontains=str_param(v, "region", 60))
+        if (v := int_param(p.get("sales_owner"), "sales_owner")) is not None:
+            qs = qs.filter(sales_owner_id=v)
+        if (v := int_param(p.get("project"), "project")) is not None:
+            qs = qs.filter(project_id=v)
         if p.get("publishable") == "1":
             qs = qs.filter(publishable=True, status="CONFIRMED")
         return qs
+
+    @action(detail=False, methods=["get"])
+    def facets(self, request):
+        """筛选下拉的候选值（仅来自本人可见范围）。"""
+        qs = self.get_queryset()
+        out = {}
+        for f in ("industry", "machine_type", "region"):
+            out[f] = sorted({v for v in qs.values_list(f, flat=True) if v})[:200]
+        out["years"] = sorted({v for v in qs.values_list("year", flat=True)}, reverse=True)
+        return Response(out)
+
+    @action(detail=False, methods=["get"])
+    def export(self, request):
+        """内部 Excel 导出（RC2）：与列表相同的筛选与可见范围；列按角色裁剪（只有 see_amount 角色导出金额与内部备注）。写审计。"""
+        import io
+
+        from openpyxl import Workbook
+
+        if not can(request.user, "performance.export"):
+            raise PermissionDenied()
+        qs = self.get_queryset().order_by("-year", "-id")[:5000]
+        see_amount = can(request.user, "performance.see_amount")
+        cols = [("title", "业绩名称"), ("year", "年份"), ("status_label", "状态"), ("source_label", "来源"), ("region", "地区"), ("industry", "行业"), ("product_summary", "供货产品"),
+                ("machine_type", "主机类型"), ("host_maker", "主机厂"), ("owner_org", "业主"), ("investor", "投资方"), ("sales_owner_name", "销售负责人"), ("project_name", "项目"),
+                ("publishable", "允许对外展示")]
+        if see_amount:
+            cols += [("order_ref", "合同/订单号"), ("internal_amount", "内部金额"), ("remark", "内部备注")]
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "业绩台账"
+        ws.append([c[1] for c in cols])
+        ser = PerformanceSerializer if see_amount else PerformanceSafeSerializer
+        n = 0
+        for row in ser(qs, many=True).data:
+            vals = []
+            for k, _ in cols:
+                v = row.get(k)
+                if k == "internal_amount" and v not in (None, ""):
+                    from decimal import Decimal
+
+                    v = Decimal(v)
+                elif k == "publishable":
+                    v = "是" if v else "否"
+                elif isinstance(v, str) and v[:1] in ("=", "+", "-", "@"):
+                    v = "'" + v  # 防 CSV/公式注入
+                vals.append(v)
+            ws.append(vals)
+            n += 1
+        ws.freeze_panes = "A2"
+        buf = io.BytesIO()
+        wb.save(buf)
+        audit(request, "export", "performance", "", f"导出业绩 Excel {n} 条（{'含' if see_amount else '不含'}金额列）", {"filters": {k: v for k, v in request.query_params.items()}, "rows": n})
+        from urllib.parse import quote as urlquote
+
+        resp = HttpResponse(buf.getvalue(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        fname = f"业绩台账-{timezone.localdate().isoformat()}.xlsx"
+        resp["Content-Disposition"] = f"attachment; filename=\"performances.xlsx\"; filename*=UTF-8''{urlquote(fname)}"
+        return resp
 
     def perform_create(self, s):
         # 手工补录：独立来源 + 待核实，不能绕过订单验证直接成为已确认
@@ -174,6 +242,16 @@ class PublicCaseListView(APIView):
             qs = qs.filter(Q(title__icontains=q) | Q(product_summary__icontains=q) | Q(region__icontains=q) | Q(industry__icontains=q) | Q(machine_type__icontains=q))
         if (y := int_param(request.query_params.get("year"), "year")) is not None:
             qs = qs.filter(year=y)
+        for f in ("industry", "machine_type", "region"):
+            if v := request.query_params.get(f):
+                qs = qs.filter(**{f: str_param(v, f, 60)})
+        if v := request.query_params.get("product"):
+            qs = qs.filter(product_summary__icontains=str_param(v, "product", 60))
+        if request.query_params.get("facets") == "1":
+            # 常用筛选的候选值：只来自“已确认 + 可公开”的业绩（白名单字段）
+            base = Performance.objects.filter(status="CONFIRMED", publishable=True)
+            return Response({f: sorted({x for x in base.values_list(f, flat=True) if x})[:200] for f in ("industry", "machine_type", "region")}
+                            | {"years": sorted({x for x in base.values_list("year", flat=True)}, reverse=True)})
         return Response([{"id": p.id, **public_case(p)} for p in qs[:500]])
 
 

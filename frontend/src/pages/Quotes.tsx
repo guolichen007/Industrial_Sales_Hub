@@ -66,6 +66,47 @@ function NewQuote({ projectId, onClose }: { projectId?: number; onClose: () => v
   );
 }
 
+function PriceHistory({ ents }: { ents: any[] }) {
+  const [f, setF] = useState({ model: "", legal_entity: "", date_from: "", date_to: "", recipient_name: "" });
+  const [accs] = useLoad(() => get<any>("/accounts/" + qs({ q: f.recipient_name })), [f.recipient_name]);
+  const accList = Array.isArray(accs) ? accs : accs?.results || [];
+  const [recipient, setRecipient] = useState("");
+  const [rows, , loading, err] = useLoad(() => get<any[]>("/quote-lines/history/" + qs({ model: f.model, legal_entity: f.legal_entity, recipient, date_from: f.date_from, date_to: f.date_to })),
+    [f.model, f.legal_entity, recipient, f.date_from, f.date_to]);
+  return (
+    <>
+      <div className="toolbar">
+        <input className="input" placeholder="产品型号或名称" value={f.model} onChange={(e) => setF({ ...f, model: e.target.value })} />
+        <input className="input" style={{ width: 140 }} placeholder="客户名称筛选" value={f.recipient_name} onChange={(e) => setF({ ...f, recipient_name: e.target.value })} />
+        <select className="select" value={recipient} onChange={(e) => setRecipient(e.target.value)}><option value="">全部客户</option>{accList.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+        <select className="select" value={f.legal_entity} onChange={(e) => setF({ ...f, legal_entity: e.target.value })}><option value="">全部出具公司</option>{(ents || []).map((e) => <option key={e.id} value={e.id}>{e.short_name}</option>)}</select>
+        <input className="input" style={{ width: 150 }} type="date" value={f.date_from} onChange={(e) => setF({ ...f, date_from: e.target.value })} title="报价日期起" />
+        <input className="input" style={{ width: 150 }} type="date" value={f.date_to} onChange={(e) => setF({ ...f, date_to: e.target.value })} title="报价日期止" />
+      </div>
+      <div className="card">
+        {loading && !rows ? <Loading err={err} /> : (
+          <div className="tablewrap">
+            <table className="data">
+              <thead><tr><th>报价日期</th><th>报价</th><th>客户</th><th>出具公司</th><th>型号 / 名称</th><th className="right">数量</th><th className="right">单价</th><th>口径</th><th className="right">折扣</th><th className="right">行含税</th><th>报价状态</th></tr></thead>
+              <tbody>
+                {(rows || []).map((r, i) => (
+                  <tr key={i}>
+                    <td>{dt(r.quote_date)}</td><td><Link className="link" to={`/quotes/${r.quote_id}`}>{r.code}</Link></td><td>{r.recipient_name}</td><td>{r.legal_entity_name}</td>
+                    <td><b>{r.model}</b><div className="micro">{r.name}</div></td><td className="right num">{Number(r.qty)}{Number(r.multiplier) !== 1 ? `×${Number(r.multiplier)}` : ""} {r.unit}</td>
+                    <td className="right num">{money(r.unit_price)}</td><td className="micro">{r.price_basis === "GROSS" ? "含税" : "未税"}</td><td className="right">{Number(r.discount_rate) ? `${Number(r.discount_rate) * 100}%` : "—"}</td>
+                    <td className="right num">{money(r.line_gross)}</td><td><Chip s={r.quote_status} /></td>
+                  </tr>
+                ))}
+                {rows && rows.length === 0 && <tr><td colSpan={11} className="empty-cell">没有符合条件的已生成报价行（不含草稿与试用报价）</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 export default function Quotes() {
   const [sp, setSp] = useSearchParams();
   const [creating, setCreating] = useState(sp.get("new") === "1");
@@ -80,11 +121,17 @@ export default function Quotes() {
   const [to, setTo] = useState("");
   const [ents] = useLoad(() => get<any[]>("/legal-entities/"), []);
   const [list, , loading, err] = useLoad(() => get<any[]>("/quotations/" + qs({ q, status, legal_entity: entity, date_from: from, date_to: to })), [q, status, entity, from, to]);
+  const [view, setView] = useState<"list" | "history">("list");
   return (
     <>
       <PageHead k="QUOTATION CENTER" title="报价中心" sub="三公司固定模板 · 后端 Decimal 计算 · 生成即冻结版本（仅商务助理/负责人/管理员可见）">
         <button className="btn primary" onClick={() => setCreating(true)}>+ 新建报价</button>
       </PageHead>
+      <div className="tabbar" style={{ marginBottom: 10 }}>
+        <button className={view === "list" ? "active" : ""} onClick={() => setView("list")}>报价单</button>
+        <button className={view === "history" ? "active" : ""} onClick={() => setView("history")}>历史价格查询</button>
+      </div>
+      {view === "history" ? <PriceHistory ents={ents || []} /> : <>
       <div className="toolbar">
         <input className="input" placeholder="搜索编号、项目、接收客户、产品型号" value={q} onChange={(e) => setQ(e.target.value)} />
         <select className="select" value={entity} onChange={(e) => setEntity(e.target.value)}><option value="">全部出具公司</option>{(ents || []).map((e) => <option key={e.id} value={e.id}>{e.short_name}</option>)}</select>
@@ -103,7 +150,7 @@ export default function Quotes() {
                     <td><Link className="link" to={`/quotes/${x.id}`}>{x.code}</Link>{x.title && <div className="micro">{x.title}</div>}</td>
                     <td><Link to={`/projects/${x.project}`}>{x.project_name}</Link><div className="micro">{x.project_code}</div></td>
                     <td>{x.recipient_name}</td><td>{x.legal_entity_name}</td>
-                    <td>{x.revisions.map((r: any) => <span key={r.id} className={"chip " + (r.status === "GENERATED" ? "" : "gray")} style={{ marginRight: 3 }}>V{r.version}</span>)}</td>
+                    <td>{x.revisions.map((r: any) => <span key={r.id} className={"chip " + (r.status === "GENERATED" ? (r.is_trial ? "amber" : "") : "gray")} style={{ marginRight: 3 }} title={r.is_trial ? "试用报价（模板未签收）" : ""}>V{r.version}{r.is_trial ? "试" : ""}</span>)}</td>
                     <td className="right num">{money(x.latest?.total_gross)}</td>
                     <td><Chip s={x.status_label} /></td><td>{x.owner_name}</td><td className="micro">{dt(x.created_at)}</td>
                   </tr>
@@ -114,6 +161,7 @@ export default function Quotes() {
           </div>
         )}
       </div>
+      </>}
       {creating && <NewQuote projectId={presetProject} onClose={() => setCreating(false)} />}
     </>
   );

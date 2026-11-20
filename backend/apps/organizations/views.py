@@ -7,7 +7,7 @@ from apps.audit.service import audit
 from apps.common.params import int_param, str_param
 from apps.common.roles import HasCap, can
 
-from .models import Account, Contact, LegalEntity, normalize_name
+from .models import Account, AccountCategory, Contact, LegalEntity, normalize_name
 
 
 class LegalEntitySerializer(serializers.ModelSerializer):
@@ -158,13 +158,41 @@ class ContactSerializer(serializers.ModelSerializer):
         fields = ["id", "account", "name", "department", "position", "mobile", "phone", "email", "remark"]
 
 
+class AccountCategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AccountCategory
+        fields = ["id", "name", "sort", "active"]
+
+
+class AccountCategoryViewSet(viewsets.ModelViewSet):
+    """客户类别字典：业务角色可读，负责人/商务维护（RC2，原型“可编辑客户分类”）。"""
+
+    queryset = AccountCategory.objects.all()
+    serializer_class = AccountCategorySerializer
+    permission_classes = [HasCap.of("account.category", read_cap="account.read")]
+    http_method_names = ["get", "post", "patch"]
+
+    def perform_create(self, s):
+        o = s.save()
+        audit(self.request, "create", "account_category", o.id, f"新增客户类别 {o.name}")
+
+    def perform_update(self, s):
+        o = s.save()
+        audit(self.request, "update", "account_category", o.id, f"修改客户类别 {o.name}")
+
+
 class AccountSerializer(serializers.ModelSerializer):
     contacts = ContactSerializer(many=True, read_only=True)
     project_count = serializers.IntegerField(read_only=True)
+    categories = serializers.PrimaryKeyRelatedField(many=True, queryset=AccountCategory.objects.filter(active=True), required=False)
+    category_names = serializers.SerializerMethodField()
 
     class Meta:
         model = Account
-        fields = ["id", "name", "kinds", "industry", "region", "address", "remark", "active", "contacts", "project_count", "created_at"]
+        fields = ["id", "name", "kinds", "categories", "category_names", "industry", "region", "address", "remark", "active", "contacts", "project_count", "created_at"]
+
+    def get_category_names(self, obj):
+        return [c.name for c in obj.categories.all()]
 
     def validate_kinds(self, v):
         if not isinstance(v, list) or not all(isinstance(x, str) and x for x in v):
@@ -181,6 +209,8 @@ class AccountViewSet(viewsets.ModelViewSet):
 
         vis = visible_projects(self.request.user)
         qs = Account.objects.prefetch_related("contacts").annotate(project_count=Count("project_parties__project", filter=Q(project_parties__project__in=vis), distinct=True))
+        if self.action != "list":
+            return qs  # 列表筛选参数（q/kind/category…）只作用于列表；详情与子资源（如 projects?q=）不受影响
         p = self.request.query_params
         if q := p.get("q"):
             q = str_param(q, "q", 100)
@@ -190,7 +220,9 @@ class AccountViewSet(viewsets.ModelViewSet):
             qs = qs.filter(kinds__icontains=k)
         if p.get("active") in ("0", "1"):
             qs = qs.filter(active=p["active"] == "1")
-        return qs
+        if (cat := int_param(p.get("category"), "category")) is not None:
+            qs = qs.filter(categories=cat)
+        return qs.prefetch_related("categories")
 
     def destroy(self, request, *a, **kw):
         if not can(request.user, "account.delete"):
@@ -226,11 +258,22 @@ class AccountViewSet(viewsets.ModelViewSet):
         from apps.projects.scope import visible_projects
 
         acc = self.get_object()
-        qs = visible_projects(request.user).filter(parties__account=acc).distinct()
+        qs = visible_projects(request.user).filter(parties__account=acc).distinct().select_related("sales_owner")
+        p = request.query_params
+        if v := p.get("presale_phase"):
+            qs = qs.filter(presale_phase=str_param(v, "presale_phase", 20))
+        if v := p.get("execution_phase"):
+            qs = qs.filter(execution_phase=str_param(v, "execution_phase", 20))
+        if v := p.get("role"):
+            qs = qs.filter(parties__account=acc, parties__party_role=str_param(v, "role", 20))
+        if v := p.get("q"):
+            v = str_param(v, "q", 100)
+            qs = qs.filter(Q(name__icontains=v) | Q(code__icontains=v))
         return Response([
-            {"id": p.id, "code": p.code, "name": p.name, "presale_phase": p.presale_phase, "execution_phase": p.execution_phase,
-             "roles": sorted({x.party_role for x in p.parties.all() if x.account_id == acc.id})}
-            for p in qs.prefetch_related("parties")
+            {"id": x.id, "code": x.code, "name": x.name, "presale_phase": x.presale_phase, "execution_phase": x.execution_phase,
+             "sales_owner_name": x.sales_owner.name if x.sales_owner else "", "updated_at": x.updated_at,
+             "roles": sorted({y.party_role for y in x.parties.all() if y.account_id == acc.id})}
+            for x in qs.prefetch_related("parties").order_by("-updated_at")
         ])
 
 

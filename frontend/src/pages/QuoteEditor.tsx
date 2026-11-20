@@ -4,6 +4,7 @@ import { ApiError, del, dt, get, money, patch, post, qs } from "../api";
 import { useAuth } from "../auth";
 import { QUOTE_NEXT, QUOTE_STATUS } from "../options";
 import { Chip, Field, Loading, Modal, PageHead, useLoad, useToast } from "../ui";
+import { Attachments } from "./common";
 
 function LineEditor({ line, rev, editable, onChanged, onSaveProduct }: { line: any; rev: any; editable: boolean; onChanged: (rev: any) => void; onSaveProduct: (line: any) => void }) {
   const { fail } = useToast();
@@ -269,6 +270,7 @@ export default function QuoteEditor() {
             {unsigned && editable && <div className="err">该出具主体的报价模板尚未经部门负责人签收（系统设置 → 出具主体）。现在只能生成带水印的试用 PDF。</div>}
             <div className="hint" style={{ marginTop: 10 }}>未经盖章的系统 PDF 仅供线下发送参考；审批与电子签章不在首期范围。</div>
           </div>
+          <div className="card cardpad"><Attachments ownerType="quote" ownerId={quote.id} canUpload={quote.status !== "CANCELLED"} title="报价附件（技术方案、询价单等；仅商务与负责人可见，不并入报价 PDF）" /></div>
         </div>
       </div>
       {picking && <ProductPicker onPick={addLine} onClose={() => setPicking(false)} />}
