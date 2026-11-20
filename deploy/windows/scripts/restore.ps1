@@ -32,7 +32,7 @@ Invoke-Manage @('ish_verify_backup', $BackupPath) | Out-Null
 if (-not $Production) {
     Write-Step '恢复演练（临时库 + 临时目录，不影响正式数据）'
     $stamp = Get-Date -Format 'yyyyMMddHHmmss'
-    $tmpDir = Join-Path $Data "ops\drill-$stamp"
+    $tmpDir = New-OpsTempDir "drill-$stamp"
     Invoke-Manage @('ish_verify_backup', $BackupPath, '--restore-to-db', ('ish_drill_' + $stamp), '--restore-data-dir', $tmpDir, '--pg-bin', $PgBin) | Out-Null
     Write-Ok '恢复演练通过；正式数据未被修改。'
     exit 0

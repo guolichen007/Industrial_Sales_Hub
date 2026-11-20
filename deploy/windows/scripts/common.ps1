@@ -83,7 +83,7 @@ function Invoke-Exe([string]$Exe, [string[]]$ExeArgs) {
 function Invoke-Manage([string[]]$ManageArgs, [switch]$AllowFail, [hashtable]$ExtraEnv) {
     $ErrorActionPreference = 'Continue'
     $env:ISH_CONFIG_FILE = $script:AppEnv
-    $env:PATH = "$script:PgBin;$env:PATH"
+    $env:PATH = $script:PgBin + [IO.Path]::PathSeparator + $env:PATH
     if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { Set-Item -Path "env:$k" -Value $ExtraEnv[$k] } }
     Push-Location -LiteralPath $script:Backend
     try {
@@ -349,6 +349,16 @@ function Add-OpsStep([hashtable]$step) {
     Save-OpsJournal
     Write-IshLog ("journal step " + ($step | ConvertTo-Json -Compress))
 }
+
+function New-OpsTempDir([string]$name) {
+    # 恢复演练等需要临时存放私有文件的目录：位于安装根目录下 _ops-tmp（在 data 之外，满足“不得恢复到正式数据目录”），
+    # 目录仅 SYSTEM/Administrators 可访问。返回的子目录本身不创建（演练命令要求目录不存在或为空）。
+    $base = Join-Path $script:Root '_ops-tmp'
+    New-Item -ItemType Directory -Force -Path $base | Out-Null
+    if (-not (Test-SimPlatform)) { Protect-Directory $base @() }
+    return (Join-Path $base $name)
+}
+function Test-Prop($obj, [string]$name) { return ($null -ne $obj -and $null -ne $obj.PSObject.Properties[$name] -and $obj.$name) }
 
 function Get-DbConn {
     # 解析 app.env 的 DATABASE_URL（应用账号），供 psql 直接操作数据库（快照/改名）

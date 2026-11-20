@@ -117,15 +117,16 @@ function Invoke-UpgradeRollback([string]$why) {
     $steps = @($j.steps)
     [array]::Reverse($steps)
     $port = [int](Read-AppEnv)['ISH_DB_PORT']
+    $dbStopped = $false
     foreach ($st in $steps) {
-        if ($st.undone) { continue }
+        if (Test-Prop $st 'undone') { continue }
         try {
             switch ($st.step) {
-                'file_new_in' { Stop-IshService $SvcDb; if (Test-Path -LiteralPath $st.dst) { Move-Item -LiteralPath $st.dst -Destination $st.src -Force } }
-                'file_old_out' { Stop-IshService $SvcDb; if (Test-Path -LiteralPath $st.dst) { Move-Item -LiteralPath $st.dst -Destination $st.src -Force } }
+                'file_new_in' { if (-not $dbStopped) { Stop-IshService $SvcDb; $dbStopped = $true }; if (Test-Path -LiteralPath $st.dst) { Move-Item -LiteralPath $st.dst -Destination $st.src -Force } }
+                'file_old_out' { if (-not $dbStopped) { Stop-IshService $SvcDb; $dbStopped = $true }; if (Test-Path -LiteralPath $st.dst) { Move-Item -LiteralPath $st.dst -Destination $st.src -Force } }
                 'db_migrate_started' {
                     # 用升级前整库快照替换（改名切换）；迁移过的库保留为 _failed_<ID> 供分析
-                    Start-IshService $SvcDb
+                    Start-IshService $SvcDb; $dbStopped = $false
                     if (-not (Wait-Db $port 60)) { throw '数据库未就绪' }
                     $c = Get-DbConn
                     $failed = "$($c.Db)_failed_$($j.id)"
@@ -135,7 +136,7 @@ function Invoke-UpgradeRollback([string]$why) {
                 }
                 'db_snapshot' {
                     # 快照未被用于回滚（失败发生在迁移之前）：删除快照；若已被改名为正式库则不存在，无操作
-                    Start-IshService $SvcDb
+                    Start-IshService $SvcDb; $dbStopped = $false
                     if (-not (Wait-Db $port 60)) { throw '数据库未就绪' }
                     Invoke-Psql "DROP DATABASE IF EXISTS `"$($st.snapshot)`"" | Out-Null
                 }
@@ -151,7 +152,9 @@ function Invoke-UpgradeRollback([string]$why) {
         }
     }
     if (-not $errs.Count) {
-        $bad = @(Test-PackageChecksums $Root)
+        # 与升级前记录的不一致项相同即可（升级前已存在的差异不应阻止回滚）
+        $known = @($j.old_release_mismatch)
+        $bad = @(Test-PackageChecksums $Root | Where-Object { $known -notcontains $_ })
         if ($bad.Count) { $errs += "回滚后旧发行文件与旧清单不一致：$(($bad | Select-Object -First 5) -join '；')" }
     }
     if (-not $errs.Count) {
@@ -183,7 +186,9 @@ function Invoke-UpgradeRollback([string]$why) {
 if ($Status) {
     Get-ChildItem -LiteralPath $OpsDir -Filter 'upgrade-*.json' -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object {
         $o = Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
-        Write-Host ("{0}  {1}  阶段 {2}  {3} → {4}" -f $o.id, $o.state, $o.phase, $o.old_version, $o.new_version)
+        $ov = if (Test-Prop $o 'old_version') { $o.old_version } else { '?' }
+        $nv = if (Test-Prop $o 'new_version') { $o.new_version } else { '?' }
+        Write-Host ("{0}  {1}  阶段 {2}  {3} → {4}" -f $o.id, $o.state, $o.phase, $ov, $nv)
     }
     exit 0
 }
@@ -207,7 +212,7 @@ try {
         if ($j.state -eq 'DONE') {
             Write-Host "升级 $Rollback 已完成。回滚会把数据库换回升级前快照：升级之后录入的所有业务数据将丢失（仍保存在 _failed_ 库中供人工处理）。" -ForegroundColor Yellow
             if (-not $Yes) { if ((Read-Host '确认回滚请输入「确认回滚」') -ne '确认回滚') { Write-Host '已取消'; exit 0 } }
-            if ($j.cleaned_at) { Fail '该升级的旧版本与快照已清理，无法回滚；请用 05-恢复备份 恢复 pre-upgrade 备份' 62 }
+            if ($j['cleaned_at']) { Fail '该升级的旧版本与快照已清理，无法回滚；请用 05-恢复备份 恢复 pre-upgrade 备份' 62 }
         }
         $m = Set-Maintenance "upgrade-rollback $Rollback"
         if ($m -and -not ((Get-MaintenanceOwner).task -like "upgrade*")) { Fail $m 63 }
@@ -238,7 +243,10 @@ try {
     $pgNew = Get-PgMajorOfBin $PkgRoot
     $pgData = [int](Get-Content -LiteralPath (Join-Path $PgData 'PG_VERSION') -Raw).Trim()
     if ($pgNew -ne $pgData) { Fail "数据库大版本不一致：数据目录为 PostgreSQL $pgData，新安装包为 $pgNew。跨大版本升级需要专门的 pg_upgrade 流程，本升级器拒绝执行。" 53 }
-    $need = (Get-DirBytes $PkgRoot) + 2 * ((Get-DirBytes $PgData) + (Get-DirBytes (Join-Path $Data 'private'))) + 1GB
+    # 新包暂存 + 数据库快照（≈ pgdata）+ pre-upgrade 备份（≈ pgdata + private）+ 1 GB 余量（模拟测试机可用 ISH_SIM_MARGIN_MB 调小）
+    $margin = 1GB
+    if ((Test-SimPlatform) -and $env:ISH_SIM_MARGIN_MB) { $margin = [int64]$env:ISH_SIM_MARGIN_MB * 1MB }
+    $need = (Get-DirBytes $PkgRoot) + 2 * ((Get-DirBytes $PgData) + (Get-DirBytes (Join-Path $Data 'private'))) + $margin
     $free = Get-FreeBytes $Root
     if ($free -lt $need) { Fail ("磁盘空间不足：需要约 {0:N0} MB，剩余 {1:N0} MB" -f ($need / 1MB), ($free / 1MB)) 54 }
     Write-Ok ("版本 {0} → {1}；PostgreSQL {2}；磁盘剩余 {3:N0} MB" -f $old, $new, $pgData, ($free / 1MB))
@@ -270,7 +278,7 @@ try {
         $bpath = $bpath[0].FullName
         $j['pre_backup'] = $bpath; Save-OpsJournal
         $drillDb = ("ish_drill_upg_" + $id)
-        $drillDir = Join-Path $Data "ops\drill-$id"
+        $drillDir = New-OpsTempDir "drill-$id"
         $rc = Invoke-Manage @('ish_verify_backup', $bpath, '--restore-to-db', $drillDb, '--restore-data-dir', $drillDir, '--pg-bin', $PgBin) -AllowFail
         if ($rc -ne 0) { throw "pre-upgrade 备份恢复演练失败（退出码 $rc）" }
         Write-Ok "pre-upgrade 备份已用旧程序校验并恢复演练通过：$bpath"
