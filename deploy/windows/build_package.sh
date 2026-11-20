@@ -77,6 +77,8 @@ echo "== 源码（git archive $SHA）"
 mkdir -p "$STAGE/app"
 git archive --format=tar HEAD backend frontend | tar -x -C "$STAGE/app"
 rm -rf "$STAGE/app/backend/tests"   # 测试不进入正式包
+# 正式局域网包不含演示数据命令（含演示口令；DEMO 模式专用）
+rm -f "$STAGE/app/backend/apps/accounts/management/commands/seed_demo.py"
 done_ src; fi
 
 if ! has fe; then
