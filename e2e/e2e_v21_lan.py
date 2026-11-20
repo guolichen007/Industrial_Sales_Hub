@@ -49,7 +49,14 @@ def login(ctx, user, pw):
     p.fill("#u", user)
     p.fill("#p", pw)
     p.click("button.btn.primary")
-    p.wait_for_selector("aside", timeout=15000)
+    try:
+        p.wait_for_selector("aside", timeout=15000)
+    except Exception:
+        # 失败证据：截图 + 页面文本，CI 制品中可直接查看
+        tag = f"login_fail_{user}_{p.viewport_size['width'] if p.viewport_size else 0}"
+        p.screenshot(path=f"{OUT}/{tag}.png", full_page=True)
+        open(f"{OUT}/{tag}.txt", "w", encoding="utf-8").write(p.inner_text("body"))
+        raise
     return p
 
 
@@ -163,7 +170,10 @@ with sync_playwright() as pw:
 
     check("V1 PDF 下载哈希与存档一致", r.status == 200 and hashlib.sha256(r.body()).hexdigest() == v1["pdf_sha256"])
     pas.click("text=+ 新版本")
-    pas.wait_for_timeout(1000)
+    try:
+        pas.wait_for_selector("button:has-text('V2')", timeout=15000)
+    except Exception:  # noqa: BLE001 —— 由下方断言记录失败
+        pass
     check("创建 V2 草稿", pas.locator("button:has-text('V2')").count() == 1)
     r2 = pas.request.get(f"{BASE}/api/quote-revisions/{v1['id']}/pdf/")
     check("V2 创建后 V1 原字节不变", hashlib.sha256(r2.body()).hexdigest() == v1["pdf_sha256"])
@@ -187,6 +197,10 @@ with sync_playwright() as pw:
     cf = new()
     pf = login(cf, "finance", PW)
     check("财务菜单无报价中心", "报价中心" not in nav_labels(pf))
+    try:
+        pf.wait_for_selector("text=合同确认与交付执行", timeout=15000)
+    except Exception:  # noqa: BLE001 —— 由下方断言记录失败
+        pass
     check("财务首页：合同确认与交付执行", "合同确认与交付执行" in pf.inner_text("body"))
     s, d = api(pf, "POST", "/order-confirmations/", {"project": pid, "legal_entity": ents[0]["id"], "basis": "CONTRACT", "order_ref": "HT-LAN-001", "contract_amount": "1"})
     check("财务提交金额被拒", s == 403, s)
@@ -330,7 +344,8 @@ check(f"浏览器发起的 API 无 5xx（{len(timings)} 个请求）", not srv5x
 check(f"普通 API P95 ≤ 1000ms（实测 {perf['api_p95_ms']} ms）", perf["api_p95_ms"] is not None and perf["api_p95_ms"] <= 1000)
 check(f"PDF 生成/下载 P95 ≤ 5000ms（实测 {perf['pdf_p95_ms']} ms）", perf["pdf_p95_ms"] is None or perf["pdf_p95_ms"] <= 5000)
 check("浏览器无 JS 运行错误", not js_errors, js_errors[:5])
-json.dump({"results": results, "perf": perf, "js_errors": js_errors}, open(f"{OUT}/e2e_v21_lan_results.json", "w"), ensure_ascii=False, indent=1)
+slowest = sorted(ok, key=lambda t: -t[2])[:25]
+json.dump({"results": results, "perf": perf, "js_errors": js_errors, "slowest_api": slowest}, open(f"{OUT}/e2e_v21_lan_results.json", "w"), ensure_ascii=False, indent=1)
 n = sum(r["pass"] for r in results)
 print(f"\n{n}/{len(results)} PASS")
 print(json.dumps(perf, ensure_ascii=False))

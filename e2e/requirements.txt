@@ -1,0 +1,3 @@
+# 浏览器验收依赖：CI 与本地统一使用此文件固定版本（RC2）。
+# 升级 Playwright 时必须同时确认 CI runner 操作系统受支持（见 .github/workflows/ci.yml e2e job）。
+playwright==1.58.0
