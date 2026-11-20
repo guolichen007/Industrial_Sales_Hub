@@ -56,8 +56,11 @@ def verify_backup_dir(path: Path) -> dict:
         man = json.loads(man_file.read_text(encoding="utf-8"))
     except ValueError:
         raise CommandError("manifest.json 无法解析")
-    if man.get("format") != 1:
+    if man.get("format") not in (1, 2):
         raise CommandError(f"不支持的备份格式：{man.get('format')}")
+    # format 2（RC2）起：private 目录必须存在（空系统为空目录）；format 1（RC1）在无附件时可能没有该目录
+    if man.get("format") >= 2 and not (path / "private").is_dir():
+        raise CommandError("备份缺少 private 目录（format 2 要求即使为空也必须存在）")
     for f in man.get("files", []):
         if listed.get("private/" + f["path"]) != f["sha256"]:
             raise CommandError(f"清单与校验和不一致：{f['path']}")
@@ -114,6 +117,8 @@ class Command(BaseCommand):
             rdir.mkdir(parents=True, exist_ok=True)
             if (p / "private").exists():
                 shutil.copytree(p / "private", rdir / "private")
+            else:  # 兼容 RC1 空备份
+                (rdir / "private").mkdir()
             # 在子进程中用临时库与临时目录运行完整性检查（不影响本进程的正式连接）
             db = settings.DATABASES["default"]
             sub_env = os.environ.copy()

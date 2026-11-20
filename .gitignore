@@ -37,3 +37,12 @@ infra/certs/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ---- RC2：真实报价样张与真实配置只在仓库外的私有目录（禁止入库） ----
+*报价单*.xls
+*报价单*.xlsx
+*-报价.xls
+*quote-samples*/
+private-samples/
+config/entities.local.json
+entities.real.json
