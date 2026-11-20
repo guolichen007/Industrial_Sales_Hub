@@ -411,10 +411,13 @@ def test_stale_version_rejected(client_for, make_quote):
     assert r.status_code == 409 and r.json()["code"] == "stale_version"
 
 
-def test_gross_price_basis_and_reference_rates(client_for, base, make_quote):
+def test_gross_price_basis_and_reference_rates(client_for, base, make_quote, users):
     from apps.organizations.models import LegalEntity
 
     LegalEntity.objects.filter(pk=base["ents"][2].id).update(price_basis="GROSS")
+    from tests.conftest import sign_template  # RC2：价税口径属于签收绑定配置，变更后需负责人重新签收
+
+    sign_template(LegalEntity.objects.get(pk=base["ents"][2].id), users["leader"])
     c = client_for("assistant")
     _, rid = make_quote(entity=base["ents"][2], lines=[], render=False)
     r = c.post(f"/api/quote-revisions/{rid}/lines/", {"name": "工业拖令电缆", "model": "CAB-3×35mm²", "unit": "米", "qty": "120", "multiplier": "2", "unit_price": "113.00", "tax_rate": "0.13"}, format="json")

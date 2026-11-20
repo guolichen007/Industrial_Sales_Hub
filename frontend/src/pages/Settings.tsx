@@ -103,32 +103,102 @@ function UserForm({ initial, onClose, onSaved }: { initial?: any; onClose: () =>
 
 function EntityForm({ e, onClose, onSaved }: { e: any; onClose: () => void; onSaved: () => void }) {
   const { notify, fail } = useToast();
-  const keys = ["name", "short_name", "address", "phone", "fax", "email", "tax_no", "bank_name", "bank_account", "quote_title", "intro_text", "footer_note", "default_terms"] as const;
+  const { can } = useAuth();
+  const keys = ["name", "short_name", "name_en", "address", "address_en", "phone", "fax", "email", "website", "tax_no", "bank_name", "bank_account", "currency_label", "quote_title", "intro_text", "footer_note", "default_terms"] as const;
   const f = useForm(Object.fromEntries(keys.map((k) => [k, e[k] || ""])) as Record<(typeof keys)[number], string>);
+  const [basis, setBasis] = useState(e.price_basis);
+  const [taxCols, setTaxCols] = useState(!!e.show_tax_columns);
+  const [tpl, setTpl] = useState(e.template_key);
   const save = async () => {
     try {
-      await patch(`/legal-entities/${e.id}/`, { ...f.v, price_basis: basis, show_tax_columns: taxCols, template_verified: verified });
-      notify("已保存。新生成的报价使用新信息，历史报价不变。");
+      await patch(`/legal-entities/${e.id}/`, { ...f.v, price_basis: basis, show_tax_columns: taxCols, template_key: tpl });
+      notify("已保存。新生成的报价使用新信息，历史报价不变。如修改了全称/英文名/标题/模板/价税口径/Logo，原签收自动失效，需负责人重新签收。");
       onSaved();
     } catch (x) {
       fail(x);
     }
   };
-  const L: Record<string, string> = { name: "公司全称", short_name: "简称", address: "地址", phone: "电话", fax: "传真", email: "邮箱", tax_no: "税号", bank_name: "开户行", bank_account: "账号", quote_title: "报价单标题", intro_text: "开头语", footer_note: "页脚说明", default_terms: "默认商务条款（每行一条）" };
-  const [basis, setBasis] = useState(e.price_basis);
-  const [taxCols, setTaxCols] = useState(!!e.show_tax_columns);
-  const [verified, setVerified] = useState(!!e.template_verified);
+  const uploadLogo = async (file: File | undefined) => {
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      await api(`/legal-entities/${e.id}/logo/`, { form: fd });
+      notify("Logo 已更新（签收需重新确认）");
+      onSaved();
+    } catch (x) {
+      fail(x);
+    }
+  };
+  const L: Record<string, string> = { name: "公司全称（中文）", short_name: "简称", name_en: "英文全称", address: "地址（中文，可多行）", address_en: "英文地址（可多行）", phone: "电话", fax: "传真", email: "邮箱", website: "网址",
+    tax_no: "税号", bank_name: "开户行", bank_account: "账号", currency_label: "币种说明", quote_title: "报价单标题", intro_text: "开头语", footer_note: "页脚说明", default_terms: "默认商务条款（每行一条）" };
+  const multi = new Set(["default_terms", "address", "address_en"]);
   return (
-    <Modal wide title={`出具主体 · 模板 ${e.template_key}`} onClose={onClose} foot={<><button className="btn" onClick={onClose}>取消</button><button className="btn primary" onClick={save}>保存</button></>}>
+    <Modal wide title={`出具主体 · ${e.short_name}`} onClose={onClose} foot={<><button className="btn" onClick={onClose}>取消</button><button className="btn primary" onClick={save}>保存</button></>}>
       <div className="fieldset">
-        {keys.map((k) => <Field key={k} label={L[k]} full={k === "default_terms" || k === "name"}>{k === "default_terms" ? <textarea className="input textarea" style={{ minHeight: 120 }} {...f.bind(k)} /> : <input className="input" {...f.bind(k)} />}</Field>)}
-        <Field label="单价口径" hint="须按真实样张与财务确认；修改只影响之后新建/未冻结的报价">
+        <Field label="报价模板版式" full hint="三套固定版式依据三份真实样张设计；更换版式会使签收失效">
+          <select className="select" value={tpl} onChange={(x) => setTpl(x.target.value)}>
+            <option value="A">A · 双语规格表（型号/描述/米数，铜价参考，英文条款）</option>
+            <option value="B">B · 中英抬头 + 参数子行（如制动力矩）+ 大写</option>
+            <option value="C">C · 双语抬头 + 部位/点数 + 多台总计</option>
+          </select>
+        </Field>
+        {keys.map((k) => <Field key={k} label={L[k]} full={multi.has(k) || k === "name" || k === "name_en"}>{multi.has(k) ? <textarea className="input textarea" style={{ minHeight: k === "default_terms" ? 120 : 60 }} {...f.bind(k)} /> : <input className="input" {...f.bind(k)} />}</Field>)}
+        <Field label="单价口径" hint="须按真实样张与财务确认；修改只影响之后新建/未冻结的报价，并使签收失效">
           <select className="select" value={basis} onChange={(x) => setBasis(x.target.value)}><option value="NET">未税单价，逐行计税</option><option value="GROSS">含税单价，倒算税额</option></select>
         </Field>
-        <Field label="报价单列"><label className="chk"><input type="checkbox" checked={taxCols} onChange={(x) => setTaxCols(x.target.checked)} />显示税率列</label></Field>
-        <Field label="模板签收" full><label className="chk"><input type="checkbox" checked={verified} onChange={(x) => setVerified(x.target.checked)} />已按真实样张核对并经财务签收（未签收前保持不勾选）</label></Field>
+        <Field label="合计区"><label className="chk"><input type="checkbox" checked={taxCols} onChange={(x) => setTaxCols(x.target.checked)} />含税口径下也列出未税合计与税额</label></Field>
+        {can("legal_entity.write") && (
+          <Field label="Logo（PNG/JPG，≤1 MB）" full hint="上传后重新编码为 PNG 并去除元数据；仅打印在报价单上">
+            <div className="rowactions">{e.logo_key && <img src={`/api/legal-entities/${e.id}/logo/image/`} alt="logo" style={{ maxHeight: 40 }} />}<input type="file" accept="image/png,image/jpeg" onChange={(x) => uploadLogo(x.target.files?.[0])} /></div>
+          </Field>
+        )}
       </div>
     </Modal>
+  );
+}
+
+function SignoffPanel({ e, onChanged }: { e: any; onChanged: () => void }) {
+  const { notify, fail } = useToast();
+  const { can } = useAuth();
+  const [note, setNote] = useState("");
+  const [hist, setHist] = useState<any[] | null>(null);
+  const sign = async () => {
+    try {
+      await post(`/legal-entities/${e.id}/signoff/`, { note });
+      notify("已签收：该主体可生成正式报价");
+      setNote("");
+      onChanged();
+    } catch (x) {
+      fail(x);
+    }
+  };
+  const revoke = async () => {
+    const reason = prompt("撤销签收的原因（必填）");
+    if (!reason) return;
+    try {
+      await post(`/legal-entities/${e.id}/signoff/revoke/`, { reason });
+      notify("已撤销签收：之后只能生成试用报价");
+      onChanged();
+    } catch (x) {
+      fail(x);
+    }
+  };
+  const so = e.signoff;
+  return (
+    <div style={{ marginTop: 8 }}>
+      {so ? <div className="micro">✔ 已签收：{so.template_key}/{so.template_version} · {so.signed_by} · {dt(so.signed_at, true)}<br />依据：{so.note}</div>
+        : <div className="micro" style={{ color: "#a96336" }}>模板 {e.template_key}/{e.template_version} 未签收：只能生成带“试用”水印的试用报价（不能标记已发送、不能作为合同依据）。</div>}
+      {can("template.signoff") && !so && (
+        <div className="inline-form" style={{ marginTop: 6 }}>
+          <input className="input" placeholder="签收依据：核对了哪些真实样张、财务黄金用例结果" value={note} onChange={(x) => setNote(x.target.value)} style={{ minWidth: 260 }} />
+          <button className="btn mini primary" disabled={note.trim().length < 6} onClick={sign}>负责人签收</button>
+        </div>
+      )}
+      {can("template.signoff") && so && <button className="btn mini" style={{ marginTop: 6 }} onClick={revoke}>撤销签收</button>}
+      {can("legal_entity.write") && <button className="btn mini" style={{ marginTop: 6, marginLeft: 6 }} onClick={() => get<any[]>(`/legal-entities/${e.id}/signoffs/`).then(setHist).catch(fail)}>签收记录</button>}
+      {hist && <ul className="micro">{hist.length === 0 && <li>暂无</li>}{hist.map((h) => <li key={h.id}>{h.template_key}/{h.template_version} · {h.signed_by} · {dt(h.signed_at, true)}{h.revoked_at ? `（已撤销：${h.revoke_reason}）` : ""}</li>)}</ul>}
+    </div>
   );
 }
 
@@ -192,8 +262,9 @@ export default function Settings() {
             {(ents || []).map((e) => (
               <div className="choice" key={e.id}>
                 <h3>{e.short_name} · 模板 {e.template_key}</h3>
-                <small>{e.name}<br />{e.address}<br />{e.phone}<br />口径：{e.price_basis === "GROSS" ? "含税单价" : "未税单价"} · {e.template_verified ? "模板已签收" : <b style={{ color: "#a96336" }}>模板未签收</b>}</small>
+                <small>{e.name}<br />{e.address}<br />{e.phone}<br />口径：{e.price_basis === "GROSS" ? "含税单价" : "未税单价"} · {e.signoff ? "模板已签收" : <b style={{ color: "#a96336" }}>模板未签收</b>}</small>
                 {can("legal_entity.write") && <div style={{ marginTop: 8 }}><button className="btn mini" onClick={() => setModal({ t: "ent", e })}>编辑信息与条款</button></div>}
+                {e.template_version !== undefined && <SignoffPanel e={e} onChanged={reloadEnts} />}
               </div>
             ))}
           </div>

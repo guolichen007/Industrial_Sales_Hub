@@ -16,6 +16,20 @@ from apps.common.pdfkit import canonical_json, read_private, sha256_bytes, store
 from .models import Quote, QuoteLine, QuoteRevision
 from .pdf import TEMPLATE_VERSION, render_quote_pdf
 
+SNAPSHOT_SCHEMA = 3
+
+
+def compute_totals(lines, host_qty=1):
+    """单套（明细）合计与整单总计。整单总计 = 单套合计 × 整单台数（单套金额已逐行舍入到分，乘以整数台数不产生新的舍入）。
+
+    返回 dict：set_net/set_tax/set_gross（单套）、net/tax/gross（整单）。舍入口径待财务签收（见模板签收文档）。
+    """
+    set_net, set_tax, set_gross = totals([{"line_net": l.line_net, "line_tax": l.line_tax} for l in lines])
+    hq = int(host_qty or 1)
+    if hq < 1:
+        raise BusinessError("整单台数至少为 1", code="bad_host_qty")
+    return {"set_net": set_net, "set_tax": set_tax, "set_gross": set_gross, "net": set_net * hq, "tax": set_tax * hq, "gross": set_gross * hq}
+
 
 def next_quote_code():
     year = timezone.localdate().year
@@ -36,7 +50,8 @@ def recalc_revision(rev: QuoteRevision, save=True):
         recalc_line(ln, rev.price_basis)
         if save:
             ln.save(update_fields=["line_net", "line_tax", "line_gross"])
-    rev.total_net, rev.total_tax, rev.total_gross = totals([{"line_net": l.line_net, "line_tax": l.line_tax} for l in lines])
+    t = compute_totals(lines, rev.host_qty)
+    rev.total_net, rev.total_tax, rev.total_gross = t["net"], t["tax"], t["gross"]
     if save:
         rev.save(update_fields=["total_net", "total_tax", "total_gross"])
     return rev
@@ -72,46 +87,78 @@ def _s(v):
 
 
 def build_snapshot(rev: QuoteRevision) -> dict:
-    return build_snapshot_from(rev, QuoteLine.objects.filter(revision_id=rev.pk).order_by("sort", "id"))
+    lines = list(QuoteLine.objects.filter(revision_id=rev.pk).order_by("sort", "id"))
+    for ln in lines:
+        recalc_line(ln, rev.price_basis)
+    return build_snapshot_from(rev, lines)
 
 
-def build_snapshot_from(rev: QuoteRevision, line_objs) -> dict:
+def _qty_text(ln):
+    q = format(D(ln.qty).normalize(), "f")
+    if ln.multiplier and D(ln.multiplier) != 1:
+        return f"{q}×{format(D(ln.multiplier).normalize(), 'f')}"
+    return q
+
+
+def build_snapshot_from(rev: QuoteRevision, line_objs, trial=False, signoff=None) -> dict:
+    """冻结快照（schema 3）：PDF 的唯一输入。金额全部为后端 Decimal 结果的字符串；模板只排版。"""
     q = rev.quote
     ent = q.legal_entity
+    gross_basis = rev.price_basis == "GROSS"
     lines = []
+    line_objs = list(line_objs)
     for ln in line_objs:
         visible = set(ln.visible_param_keys or [])
         shown = [{"key": p.get("key"), "label": p.get("label"), "value": p.get("value"), "unit": p.get("unit", "")} for p in (ln.params or []) if p.get("key") in visible]
+        note = ln.remark or ""
+        if D(ln.discount_rate or 0) > 0:
+            pct = format((D(ln.discount_rate) * 100).normalize(), "f")
+            note = "；".join(x for x in [note, f"优惠：{pct}%"] if x)
         lines.append({
             "model": ln.model, "name": ln.name, "brand": ln.brand, "description": ln.description,
-            "params_shown": shown, "unit": ln.unit, "qty": _s(ln.qty), "multiplier": _s(ln.multiplier), "unit_price": _s(ln.unit_price),
+            "params_shown": shown, "unit": ln.unit, "qty": _s(ln.qty), "multiplier": _s(ln.multiplier), "qty_total": _qty_text(ln), "unit_price": _s(ln.unit_price),
             "tax_rate": _s(ln.tax_rate), "discount_rate": _s(ln.discount_rate),
             "line_net": _s(ln.line_net), "line_tax": _s(ln.line_tax), "line_gross": _s(ln.line_gross),
-            "remark": ln.remark, "product_id": ln.product_id,
+            # 明细“总价”列显示的金额：含税单价口径为含税额；未税单价口径为未税额（合计区另列税额与含税合计）
+            "amount": _s(ln.line_gross if gross_basis else ln.line_net),
+            "remark": ln.remark, "note": note, "product_id": ln.product_id,
         })
+    t = compute_totals(line_objs, rev.host_qty)
     c = q.recipient_contact
+    u = rev.created_by
+    brands = list(dict.fromkeys(ln.brand for ln in line_objs if ln.brand))
     return {
-        "schema": 2,
+        "schema": SNAPSHOT_SCHEMA,
         "code": rev.code,
+        "version": rev.version,
         "template_key": ent.template_key,
         "template_version": TEMPLATE_VERSION,
+        "trial": bool(trial),
+        "signoff": signoff,
         "price_basis": rev.price_basis,
-        "legal_entity": {k: getattr(ent, k) for k in ["code", "name", "short_name", "address", "phone", "fax", "email", "tax_no", "bank_name", "bank_account", "footer_note", "quote_title", "intro_text", "show_tax_columns"]},
+        "show_tax_breakdown": (not gross_basis) or bool(ent.show_tax_columns),
+        "legal_entity": {k: getattr(ent, k) for k in ["code", "name", "short_name", "name_en", "address", "address_en", "website", "phone", "fax", "email", "tax_no", "bank_name", "bank_account",
+                                                       "footer_note", "quote_title", "intro_text", "show_tax_columns", "currency_label", "logo_key", "logo_sha256"]},
         "recipient": {"id": q.recipient_id, "name": q.recipient.name},
-        "recipient_contact": {"name": c.name, "position": c.position, "mobile": c.mobile, "phone": c.phone} if c else None,
+        "recipient_contact": {"name": c.name, "position": c.position, "mobile": c.mobile, "phone": c.phone, "email": c.email} if c else None,
+        "sender": {"name": u.name if u else "", "phone": (u.phone if u else ""), "mobile": (u.phone if u else ""), "email": (u.email if u else "")},
         "project": {"id": q.project_id, "code": q.project.code, "name": q.project.name},
         "title": q.title,
         "quote_date": rev.quote_date.isoformat(),
         "valid_days": rev.valid_days,
         "delivery_terms": rev.delivery_terms,
         "payment_terms": rev.payment_terms,
+        "warranty": rev.warranty,
         "terms": rev.terms,
         "remark": rev.remark,
         "reference": {"copper": rev.ref_copper_price, "fx": rev.ref_exchange_rate, "valid_until": rev.ref_valid_until.isoformat() if rev.ref_valid_until else "", "note": rev.ref_note},
+        "brand_summary": "、".join(brands),
+        "host_qty": rev.host_qty,
+        "host_label": rev.host_label,
         "show_upper_amount": rev.show_upper_amount,
-        "prepared_by": (rev.created_by.name if rev.created_by else ""),
+        "prepared_by": (u.name if u else ""),
         "lines": lines,
-        "totals": {"net": _s(rev.total_net), "tax": _s(rev.total_tax), "gross": _s(rev.total_gross)},
+        "totals": {k: _s(v) for k, v in t.items()},
     }
 
 
@@ -122,7 +169,15 @@ class PdfFailed(Exception):
         self.message = message
 
 
-def generate_revision(rev_id: int, user) -> QuoteRevision:
+def signoff_state(ent):
+    """(是否已签收, 签收摘要)。按“模板 + 模板版本 + 主体关键配置”判断。"""
+    so = ent.current_signoff(TEMPLATE_VERSION)
+    if not so:
+        return False, None
+    return True, {"id": so.id, "by": so.signed_by.name, "at": so.signed_at.isoformat(timespec="seconds"), "template_version": so.template_version}
+
+
+def generate_revision(rev_id: int, user, trial: bool = False) -> QuoteRevision:
     """生成 PDF 并冻结版本：至多成功一次；失败不留下半状态。
 
     顺序：加锁 → 内存中重算并构建快照（不写库）→ 渲染 PDF → 成功后才写入行金额、快照、文件与状态。
@@ -136,10 +191,15 @@ def generate_revision(rev_id: int, user) -> QuoteRevision:
         lines_mem = list(QuoteLine.objects.filter(revision_id=rev.pk).order_by("sort", "id"))
         if not lines_mem:
             raise BusinessError("报价至少需要一行产品。", code="empty_quote")
+        signed, so = signoff_state(rev.quote.legal_entity)
+        if not signed and not trial:
+            raise BusinessError("该出具主体的报价模板（当前模板版本）尚未经部门负责人签收：只能生成带“试用”水印的试用报价。", code="template_unsigned", http_status=409)
         for ln in lines_mem:
             recalc_line(ln, rev.price_basis)
-        rev.total_net, rev.total_tax, rev.total_gross = totals([{"line_net": l.line_net, "line_tax": l.line_tax} for l in lines_mem])
-        snap = build_snapshot_from(rev, lines_mem)
+        t = compute_totals(lines_mem, rev.host_qty)
+        rev.total_net, rev.total_tax, rev.total_gross = t["net"], t["tax"], t["gross"]
+        is_trial = not signed
+        snap = build_snapshot_from(rev, lines_mem, trial=is_trial, signoff=so)
         try:
             pdf = render_quote_pdf(snap)
         except Exception as e:  # noqa: BLE001
@@ -157,6 +217,7 @@ def generate_revision(rev_id: int, user) -> QuoteRevision:
             rev.pdf_sha256 = sha256_bytes(pdf)
             rev.pdf_size = len(pdf)
             rev.status = QuoteRevision.GENERATED
+            rev.is_trial = is_trial
             rev.generated_by = user
             rev.generated_at = timezone.now()
             rev.last_error = ""
@@ -208,6 +269,9 @@ def create_next_revision(quote: Quote, user) -> QuoteRevision:
         ref_exchange_rate=latest.ref_exchange_rate if latest else "",
         ref_valid_until=latest.ref_valid_until if latest else None,
         ref_note=latest.ref_note if latest else "",
+        warranty=latest.warranty if latest else "",
+        host_qty=latest.host_qty if latest else 1,
+        host_label=latest.host_label if latest else "",
         price_basis=quote.legal_entity.price_basis,
         created_by=user,
     )

@@ -41,9 +41,19 @@ def client_for(users):
     return make
 
 
+def sign_template(entity, leader, note="测试：已按虚构样张核对"):
+    from apps.organizations.models import TemplateSignoff
+    from apps.quotations.pdf import TEMPLATE_VERSION
+
+    return TemplateSignoff.objects.create(entity=entity, template_key=entity.template_key, template_version=TEMPLATE_VERSION, config_sha256=entity.signoff_config_sha256(),
+                                          config={k: getattr(entity, k) for k in entity.SIGNOFF_FIELDS}, note=note, signed_by=leader)
+
+
 @pytest.fixture
 def base(db, users):
     ents = [LegalEntity.objects.create(code=c, short_name=f"{c}公司", name=f"测试{c}有限公司", template_key=c, address="测试地址", phone="000-1", default_terms="条款一\n条款二") for c in "ABC"]
+    for e in ents:  # 既有用例代表“模板已签收”的正式状态；未签收（试用）路径见 tests/test_rc2_templates.py
+        sign_template(e, users["leader"])
     cat = ProductCategory.objects.create(name="润滑系统")
     prods = [
         Product.objects.create(sku="LUB-320", model="LUB-320", name="集中润滑系统", category=cat, unit="套", base_price=Decimal("39000"), tax_rate=Decimal("0.13"),

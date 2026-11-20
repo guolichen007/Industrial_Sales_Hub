@@ -11,9 +11,24 @@ from .models import Account, Contact, LegalEntity, normalize_name
 
 
 class LegalEntitySerializer(serializers.ModelSerializer):
+    signoff = serializers.SerializerMethodField()
+    template_version = serializers.SerializerMethodField()
+
     class Meta:
         model = LegalEntity
-        fields = "__all__"
+        exclude = ["template_verified"]
+        read_only_fields = ["logo_key", "logo_sha256"]
+
+    def get_template_version(self, obj):
+        from apps.quotations.pdf import TEMPLATE_VERSION
+
+        return TEMPLATE_VERSION
+
+    def get_signoff(self, obj):
+        so = obj.current_signoff()
+        if not so:
+            return None
+        return {"id": so.id, "template_key": so.template_key, "template_version": so.template_version, "signed_by": so.signed_by.name, "signed_at": so.signed_at, "note": so.note}
 
 
 class LegalEntityPublicSerializer(serializers.ModelSerializer):
@@ -33,8 +48,108 @@ class LegalEntityViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch"]
 
     def perform_update(self, s):
+        before = s.instance.signoff_config_sha256()
         e = s.save()
-        audit(self.request, "update", "legal_entity", e.id, f"修改出具主体 {e.short_name}")
+        changed = e.signoff_config_sha256() != before
+        audit(self.request, "update", "legal_entity", e.id, f"修改出具主体 {e.short_name}" + ("（关键模板配置变化：原签收失效，需负责人重新签收）" if changed else ""))
+
+    @action(detail=True, methods=["post"])
+    def signoff(self, request, pk=None):
+        """负责人签收当前模板版本 + 当前主体关键配置。仅 LEADER；必须填写签收说明（核对了哪些样张/黄金用例）。"""
+        from apps.common.errors import BusinessError
+        from apps.quotations.pdf import TEMPLATE_VERSION
+
+        from .models import TemplateSignoff
+
+        if not can(request.user, "template.signoff"):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("仅部门负责人可签收报价模板")
+        e = LegalEntity.objects.select_for_update().get(pk=self.get_object().pk)
+        note = str_param(request.data.get("note"), "note", 300, required=True)
+        if len(note.strip()) < 6:
+            raise BusinessError("请写明签收依据（例如：已与 2026-11 真实样张逐项比对、财务 10 组黄金用例一致）", code="note_required")
+        if e.current_signoff(TEMPLATE_VERSION):
+            raise BusinessError("当前模板版本与配置已签收", code="already_signed")
+        so = TemplateSignoff.objects.create(entity=e, template_key=e.template_key, template_version=TEMPLATE_VERSION, config_sha256=e.signoff_config_sha256(),
+                                            config={k: getattr(e, k) for k in e.SIGNOFF_FIELDS}, note=note, signed_by=request.user)
+        audit(request, "signoff", "legal_entity", e.id, f"签收报价模板 {e.short_name} · {e.template_key}/{TEMPLATE_VERSION}", {"signoff_id": so.id, "note": note})
+        return Response(LegalEntitySerializer(e, context={"request": request}).data, status=201)
+
+    @action(detail=True, methods=["post"], url_path="signoff/revoke")
+    def revoke_signoff(self, request, pk=None):
+        from django.utils import timezone
+
+        from apps.common.errors import BusinessError
+
+        if not can(request.user, "template.signoff"):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("仅部门负责人可撤销签收")
+        e = self.get_object()
+        so = e.current_signoff()
+        if not so:
+            raise BusinessError("当前没有有效签收", code="not_signed")
+        so.revoked_by, so.revoked_at, so.revoke_reason = request.user, timezone.now(), str_param(request.data.get("reason"), "reason", 300) or ""
+        so.save()
+        audit(request, "signoff_revoke", "legal_entity", e.id, f"撤销报价模板签收 {e.short_name}", {"signoff_id": so.id})
+        return Response(LegalEntitySerializer(e, context={"request": request}).data)
+
+    @action(detail=True, methods=["get"], url_path="signoffs")
+    def signoffs(self, request, pk=None):
+        if not can(request.user, "legal_entity.write"):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied()
+        e = self.get_object()
+        return Response([{"id": x.id, "template_key": x.template_key, "template_version": x.template_version, "note": x.note, "signed_by": x.signed_by.name, "signed_at": x.signed_at,
+                          "revoked_at": x.revoked_at, "revoke_reason": x.revoke_reason, "config": x.config} for x in e.signoffs.select_related("signed_by")])
+
+    @action(detail=True, methods=["post"], url_path="logo")
+    def logo(self, request, pk=None):
+        """上传主体 Logo（PNG/JPG，≤1 MB）；用 Pillow 重新编码为 PNG（去除元数据）。更换 Logo 会使签收失效。"""
+        import io
+
+        from apps.common.errors import BusinessError
+        from apps.common.pdfkit import sha256_bytes, store_private
+
+        if not can(request.user, "legal_entity.write"):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied()
+        e = self.get_object()
+        f = request.FILES.get("file")
+        if not f or f.size > 1024 * 1024:
+            raise BusinessError("请选择不超过 1 MB 的 PNG/JPG 图片", code="bad_logo", http_status=400)
+        try:
+            from PIL import Image
+
+            im = Image.open(f)
+            if im.format not in ("PNG", "JPEG"):
+                raise ValueError(im.format)
+            im.load()
+            out = io.BytesIO()
+            (im.convert("RGBA") if im.mode in ("P", "LA") else im).save(out, "PNG")
+            data = out.getvalue()
+        except Exception:  # noqa: BLE001
+            raise BusinessError("图片无法识别，请使用 PNG 或 JPG", code="bad_logo", http_status=400)
+        e.logo_key, e.logo_sha256 = store_private("logos", data, ".png"), sha256_bytes(data)
+        e.save(update_fields=["logo_key", "logo_sha256"])
+        audit(request, "update", "legal_entity", e.id, f"更换出具主体 Logo {e.short_name}（签收需重新确认）")
+        return Response(LegalEntitySerializer(e, context={"request": request}).data)
+
+    @action(detail=True, methods=["get"], url_path="logo/image")
+    def logo_image(self, request, pk=None):
+        from django.http import HttpResponse
+
+        from apps.common.pdfkit import read_private
+
+        e = self.get_object()
+        if not e.logo_key or not can(request.user, "legal_entity.write"):
+            from rest_framework.exceptions import NotFound
+
+            raise NotFound()
+        return HttpResponse(read_private(e.logo_key), content_type="image/png")
 
 
 class ContactSerializer(serializers.ModelSerializer):

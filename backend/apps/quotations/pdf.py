@@ -1,207 +1,436 @@
-"""三套固定报价模板（A/B/C）。唯一输入：冻结快照 dict。
+"""报价模板 2026.11-r3（RC2）：依据三份真实样张的版式重做的三套固定模板。唯一输入：冻结快照 dict。
 
-模板版本号 TEMPLATE_VERSION 写入修订记录；改版必须递增，历史 PDF 存档不受影响。
+  A 双语规格表（参照电缆报价样张）：公司名抬头 + 右上 Logo；“报价单 / QUOTATION”；双栏双语业务字段
+    （项目/发往/收件人/发件人/交货条款/修订版号/报价编号 | 铜价/品牌/货币/质保期/付款方式/有效期/报价日期）；
+    明细列 项号Item / 产品名称Product / 规格型号Specification Model / 描述说明Description / 数量Qty. / 单位Unit /
+    单价Unit Price / 总价Total Price；“总价：”；英文商务条款（Terms and conditions）+ 公司英文名与地址。
+    铜/铝调价公式只作为条款文字展示，不做行情接口、不自动调价（D4）。
+  B 中英抬头 + 参数子行（参照制动器报价样张）：Logo + 中文公司名 + 英文公司名；左栏 To/Sub/Email/Attn/Tel，
+    右栏 Add/Web./Email/From/Tel./Date；开头语 + “币种：人民币（元）”；明细 序号/名称/规格、型号/数量/单位/单价/总价/备注，
+    每项下方逐条打印“参数名: 参数值”子行（如 制动力矩）；合计：、人民币金额(大写)：、注：编号条款、此致 + 公司名。
+  C 双语抬头 + 部位/点数 + 多台总计（参照润滑报价样张）：Logo，左英文名/地址/网址/邮箱，右中文名/地址/电话/传真；
+    “报 价 单”；项目/报价单号、To/致、Tel/座机、Mobile/移动、Attn/联系人 | From/自、Tel、Mobile、Email；
+    明细 序号/名称/润滑部位/单位/数量/单价/总价/备注（同名连续行合并显示名称）；合计：、“N台××总计：”、
+    人民币金额(大写)：、注：编号条款；右下公司名 + 日期。
+
+共同规则
+- 金额全部来自后端 Decimal 计算（apps.common.money），模板只格式化，不做任何计算；“总计 = 合计 × 整单台数”在服务层计算后写入快照。
+- 未签收（模板 + 模板版本 + 主体关键配置未经负责人签收）时只能生成“试用报价”：每页斜向水印“试用 · 模板未签收 · 非正式报价”、
+  标题前缀【试用】、页脚注明，且元数据 Subject 标记 TRIAL —— 不可能被误认为正式报价。
+- 历史 PDF 永远返回存档原字节；RC1（2026.11-r2）快照由 pdf_r2 渲染，本模块不改变其输出。
 """
 import io
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.lib.utils import ImageReader
+from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from apps.common.money import D, rmb_upper
-from apps.common.pdfkit import make_numbered_canvas, mx, register_fonts
+from apps.common.pdfkit import draw_mixed, make_numbered_canvas, mx, register_fonts
 
-TEMPLATE_VERSION = "2026.11-r2"  # r2：主体可配置标题/开头语/税列/含税口径、参考价、乘数；内置可分发字体
+TEMPLATE_VERSION = "2026.11-r3"
+TRIAL_MARK = "试用 · 模板未签收 · 非正式报价"
+DRAFT_MARK = "草稿预览 · 非正式报价"
 
-THEMES = {
-    "A": {"name": "模板A·蓝色抬头", "primary": colors.HexColor("#163a5c"), "accent": colors.HexColor("#1f6fa8"), "light": colors.HexColor("#eaf1f8"), "band": True},
-    "B": {"name": "模板B·绿色抬头", "primary": colors.HexColor("#0b6e5f"), "accent": colors.HexColor("#14907d"), "light": colors.HexColor("#e7f5f1"), "band": False},
-    "C": {"name": "模板C·灰色简洁", "primary": colors.HexColor("#333a42"), "accent": colors.HexColor("#5c6670"), "light": colors.HexColor("#f1f2f4"), "band": False},
-}
+INK = colors.HexColor("#1b1f24")
+GREY = colors.HexColor("#5b6470")
+LINE = colors.HexColor("#9aa3ad")
+BLUE_A = colors.HexColor("#2f6db5")      # 样张 A：公司名蓝色
+BAND_A = colors.HexColor("#dfe9f5")      # 样张 A：明细隔行底色
+BLUE_B = colors.HexColor("#3f6fd8")      # 样张 B：公司名/网址蓝色
+BLUE_C = colors.HexColor("#1e6fd0")      # 样张 C：抬头分隔线
 
 
-def _fmt(v, places=2):
+def money_fmt(v, places=2):
+    return f"{D(v):,.{places}f}"
+
+
+def plain(v):
+    """样张 B/C 的“常规”数字格式：整数不带小数与千分位，非整数两位小数。"""
     d = D(v)
-    q = f"{d:,.{places}f}"
-    return q
+    return f"{d:.0f}" if d == d.to_integral() else f"{d:.2f}"
 
 
-def _qty(v):
+def qty_fmt(v):
     d = D(v).normalize()
-    s = format(d, "f")
-    return s
+    return format(d, "f")
 
 
-def _p(text, style):
-    return Paragraph(mx(text, bold=style.fontName.endswith("Bold")), style)
+class _Ctx:
+    def __init__(self, snap):
+        self.snap = snap
+        self.ent = snap["legal_entity"]
+        f = register_fonts()
+        self.F, self.FB = f["font"], f["bold"]
+        self.trial = bool(snap.get("trial"))
+        self.watermark = snap.get("watermark") or ("TRIAL" if self.trial else None)
+        s = lambda name, **kw: ParagraphStyle(name, **{"fontName": self.F, "fontSize": 8.6, "leading": 11.6, "textColor": INK, **kw})
+        self.base = s("base")
+        self.small = s("small", fontSize=7.8, leading=10.4, textColor=GREY)
+        self.cell = s("cell", fontSize=8.4, leading=11)
+        self.cell_c = s("cellc", fontSize=8.4, leading=11, alignment=TA_CENTER)
+        self.cell_r = s("cellr", fontSize=8.4, leading=11, alignment=TA_RIGHT)
+        self.head = s("head", fontSize=8.2, leading=10.4, alignment=TA_CENTER, fontName=self.FB)
+        self.bold_r = s("boldr", fontSize=9, leading=12, alignment=TA_RIGHT, fontName=self.FB)
+        self.bold = s("bold", fontSize=9, leading=12, fontName=self.FB)
+
+    def p(self, text, style=None, bold=False):
+        style = style or self.base
+        return Paragraph(mx(text, bold=bold or style.fontName == self.FB), style)
+
+    def logo(self, max_w, max_h):
+        key, sha = self.ent.get("logo_key"), self.ent.get("logo_sha256")
+        if not key:
+            return None
+        from apps.common.pdfkit import read_private, sha256_bytes
+
+        data = read_private(key)
+        if sha256_bytes(data) != sha:
+            raise ValueError("Logo 文件校验失败（哈希不一致）")
+        ir = ImageReader(io.BytesIO(data))
+        w, h = ir.getSize()
+        k = min(max_w / w, max_h / h)
+        return Image(io.BytesIO(data), width=w * k, height=h * k)
+
+
+def _title(ctx, zh, en=None, size=17):
+    t = ("【试用】" if ctx.trial else "") + zh
+    st = ParagraphStyle("t", fontName=ctx.FB, fontSize=size, leading=size + 4, alignment=TA_CENTER, textColor=INK)
+    out = [Paragraph(mx(t, bold=True), st)]
+    if en:
+        out.append(Paragraph(mx(en, bold=True), ParagraphStyle("te", fontName=ctx.FB, fontSize=size - 4, leading=size, alignment=TA_CENTER, textColor=INK)))
+    return out
+
+
+def _reference_line(ctx, include_copper):
+    """参考价（铜价/汇率/有效期/说明）：仅手工录入并印刷，不参与任何自动调价（D4）。"""
+    ref = ctx.snap.get("reference") or {}
+    parts = [f"参考铜价：{ref['copper']}" if include_copper and ref.get("copper") else "", f"参考汇率/Exchange rate：{ref['fx']}" if ref.get("fx") else "",
+             f"参考值有效期至：{ref['valid_until']}" if ref.get("valid_until") else "", ref.get("note") or ""]
+    parts = [x for x in parts if x]
+    if not parts:
+        return []
+    return [Paragraph(mx("；".join(parts) + "。上述参考值仅作报价依据说明，价格以本报价单所列为准。"), ctx.small), Spacer(1, 2 * mm)]
+
+
+def _terms(snap, header_has_commercial=False):
+    """条款：交货期/付款/质保/有效期 + 自由条款（每行一条），保持样张“注：1. …”的编号习惯。
+    header_has_commercial=True（模板 A：抬头已有交货/付款/质保/有效期字段）时只输出自由条款，避免重复。"""
+    out = []
+    terms_text = [x.strip() for x in (snap.get("terms") or "").splitlines() if x.strip()]
+    if header_has_commercial:
+        return terms_text
+    joined = "".join(terms_text)
+    if snap.get("delivery_terms") and "交货" not in joined:
+        out.append(f"交货期：{snap['delivery_terms']}")
+    if snap.get("payment_terms") and "付款" not in joined:
+        out.append(f"付款方式：{snap['payment_terms']}")
+    if snap.get("warranty") and "质保" not in joined:
+        out.append(f"质保期：{snap['warranty']}")
+    if "有效期" not in joined:
+        out.append(f"报价有效期：自报价日期起 {snap['valid_days']} 天。")
+    return out + terms_text
+
+
+def _contact(snap):
+    rc = snap.get("recipient_contact") or {}
+    return rc
+
+
+def _sender(snap):
+    s = snap.get("sender") or {}
+    return s.get("name") or snap.get("prepared_by") or "", s.get("phone") or "", s.get("mobile") or "", s.get("email") or ""
+
+
+# ============================================================ 模板 A
+def _build_a(ctx, W):
+    snap, ent = ctx.snap, ctx.ent
+    story = []
+    name_st = ParagraphStyle("na", fontName=ctx.FB, fontSize=15, leading=19, textColor=BLUE_A)
+    logo = ctx.logo(40 * mm, 16 * mm)
+    head = Table([[Paragraph(mx(ent["name"], bold=True), name_st), logo or ""]], colWidths=[W - 45 * mm, 45 * mm])
+    head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("ALIGN", (1, 0), (1, 0), "RIGHT"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+    story += [head, Spacer(1, 5 * mm)] + _title(ctx, ent.get("quote_title") or "报价单", "QUOTATION") + [Spacer(1, 3 * mm)]
+    ref = snap.get("reference") or {}
+    rc = _contact(snap)
+    sname, sphone, smobile, _semail = _sender(snap)
+    lab = ParagraphStyle("la", parent=ctx.cell, textColor=INK)
+    rows = [
+        ("项目名称/Project Name:", snap["project"]["name"], "铜价(人民币/吨)/Cu(CNY/Ton)：", ref.get("copper") or "—"),
+        ("发往/To：", snap["recipient"]["name"], "产品品牌/Product Brand：", snap.get("brand_summary") or "—"),
+        ("收件人/Attn：", " ".join(x for x in [rc.get("name"), rc.get("position")] if x) or "—", "货币/Currency：", ent.get("currency_label") or "人民币 CNY"),
+        ("发件人/Sender：", "  ".join(x for x in [sname, smobile or sphone] if x) or "—", "质保期/WP：", snap.get("warranty") or "—"),
+        ("交货条款/Delivery Terms：", snap.get("delivery_terms") or "—", "付款方式/Payment Terms：", snap.get("payment_terms") or "—"),
+        ("修订版号/Revision No.：", f"Rev {snap['version']}.0", "报价有效期/Offer Validity Days：", f"{snap['valid_days']} 天"),
+        ("报价编号/Quotation No.：", snap["code"], "报价日期/Date Of Offer：", snap["quote_date"]),
+    ]
+    data = [[ctx.p(a, lab), ctx.p(b, ctx.cell), ctx.p(c, lab), ctx.p(d, ctx.cell)] for a, b, c, d in rows]
+    it = Table(data, colWidths=[W * 0.24, W * 0.26, W * 0.30, W * 0.20])
+    it.setStyle(TableStyle([("LINEABOVE", (0, 0), (-1, 0), 0.8, BLUE_A), ("LINEBELOW", (0, -1), (-1, -1), 0.8, BLUE_A),
+                            ("LINEBELOW", (0, 0), (-1, -2), 0.25, colors.HexColor("#d5dbe2")),
+                            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 2.2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.2), ("LEFTPADDING", (0, 0), (-1, -1), 1)]))
+    story += [it, Spacer(1, 2 * mm)] + _reference_line(ctx, include_copper=False) + [Spacer(1, 2 * mm)]
+    hdr = ["项号\nItem", "产品名称\nProduct", "规格型号\nSpecification  Model", "描述说明\nDescription", "数量\nQty.", "单位\nUnit", "单价\nUnit Price", "总价\nTotal Price"]
+    cols = [11 * mm, 30 * mm, 33 * mm, None, 16 * mm, 12 * mm, 22 * mm, 26 * mm]
+    cols[3] = W - sum(c for c in cols if c)
+    rows = [[ctx.p(h, ctx.head) for h in hdr]]
+    for i, ln in enumerate(snap["lines"], 1):
+        desc = ln.get("description") or ""
+        params = "；".join(f"{p['label']}：{p['value']}{p.get('unit') or ''}" for p in ln.get("params_shown", []))
+        desc = "；".join(x for x in [desc, params, ln.get("note") or ""] if x)
+        rows.append([ctx.p(i, ctx.cell_c), ctx.p(ln["name"], ctx.cell_c), ctx.p(ln["model"], ctx.cell_c), ctx.p(desc or "—", ctx.cell_c),
+                     ctx.p(ln["qty_total"], ctx.cell_c), ctx.p(ln["unit"], ctx.cell_c), ctx.p(money_fmt(ln["unit_price"]), ctx.cell_r), ctx.p(money_fmt(ln["amount"]), ctx.cell_r)])
+    lt = Table(rows, colWidths=cols, repeatRows=1)
+    st = [("GRID", (0, 0), (-1, -1), 0.5, INK), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 2.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+          ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2)]
+    for r in range(1, len(rows), 2):
+        st.append(("BACKGROUND", (0, r), (-1, r), BAND_A))
+    lt.setStyle(TableStyle(st))
+    story.append(lt)
+    story += _totals_block(ctx, W, label_total="总价：", show_upper=snap.get("show_upper_amount"))
+    # 英文商务条款（原文由主体默认条款提供，每行一条；空行分段）
+    tst = ParagraphStyle("tc", parent=ctx.base, fontSize=8.4, leading=11.4)
+    block = [Spacer(1, 4 * mm), ctx.p("Terms and conditions:", ctx.bold)]
+    for line in _terms(snap, header_has_commercial=True):
+        block.append(Paragraph(mx(line), tst))
+    if snap.get("remark"):
+        block.append(Paragraph(mx("Remark / 备注：" + snap["remark"]), tst))
+    story.append(KeepTogether(block))
+    tail = [x for x in [ent.get("name_en"), (("Address: " + ent["address_en"]) if ent.get("address_en") else "")] if x]
+    if tail:
+        story += [Spacer(1, 3 * mm)] + [Paragraph(mx(x), tst) for x in tail]
+    return story
+
+
+# ============================================================ 模板 B
+def _build_b(ctx, W):
+    snap, ent = ctx.snap, ctx.ent
+    story = []
+    logo = ctx.logo(42 * mm, 17 * mm)
+    nm = ParagraphStyle("nb", fontName=ctx.FB, fontSize=14, leading=18, textColor=BLUE_B, alignment=TA_RIGHT)
+    en = ParagraphStyle("eb", fontName=ctx.FB, fontSize=8.6, leading=11, textColor=BLUE_B, alignment=TA_RIGHT)
+    right = [Paragraph(mx(ent["name"], bold=True), nm)]
+    if ent.get("name_en"):
+        right.append(Paragraph(mx(ent["name_en"], bold=True), en))
+    head = Table([[logo or "", right]], colWidths=[W * 0.42, W * 0.58])
+    head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "BOTTOM"), ("LINEBELOW", (0, 0), (-1, 0), 0.8, LINE), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
+    story.append(head)
+    if ctx.trial:
+        story += [Spacer(1, 1 * mm)] + _title(ctx, ent.get("quote_title") or "报价单", size=12)
+    rc = _contact(snap)
+    sname, sphone, smobile, semail = _sender(snap)
+    lab = ParagraphStyle("lb", parent=ctx.cell, textColor=INK)
+    link = ParagraphStyle("lk", parent=ctx.cell, textColor=BLUE_B)
+    left = [("To:", snap["recipient"]["name"]), ("Sub:", snap["project"]["name"]), ("Email:", rc.get("email") or ""), ("Attn:", " ".join(x for x in [rc.get("name"), rc.get("position")] if x)), ("Tel:", rc.get("mobile") or rc.get("phone") or "")]
+    rightc = [("Add:", ent.get("address") or ""), ("Web.:", ent.get("website") or ""), ("Email:", ent.get("email") or semail), ("From:", sname), ("Tel.:", smobile or sphone or ent.get("phone") or ""), ("Date:", snap["quote_date"])]
+    n = max(len(left), len(rightc))
+    left += [("", "")] * (n - len(left))
+    data = [[ctx.p(a, lab), ctx.p(b, ctx.cell), ctx.p(c, lab if c != "Web.:" else link), ctx.p(d, ctx.cell)] for (a, b), (c, d) in zip(left, rightc)]
+    it = Table(data, colWidths=[13 * mm, W * 0.5 - 13 * mm, 13 * mm, W * 0.5 - 13 * mm])
+    it.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+    story += [Spacer(1, 1.5 * mm), it, Spacer(1, 4 * mm)]
+    intro = Table([[ctx.p(ent.get("intro_text") or "感谢您对我公司产品的关注，有关报价如下："), ctx.p(f"币种：{ent.get('currency_label') or '人民币（元）'}", ctx.cell_r)]], colWidths=[W * 0.7, W * 0.3])
+    intro.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+    story += [intro, Spacer(1, 2 * mm)] + _reference_line(ctx, include_copper=True)
+    hdr = ["序号", "名称", "规格、型号", "数量", "单位", "单价", "总价", "备注"]
+    cols = [12 * mm, 30 * mm, None, 15 * mm, 13 * mm, 24 * mm, 27 * mm, 22 * mm]
+    cols[2] = W - sum(c for c in cols if c)
+    rows = [[ctx.p(h, ParagraphStyle("hb", parent=ctx.cell_c)) for h in hdr]]
+    sub_rows = []
+    for i, ln in enumerate(snap["lines"], 1):
+        rows.append([ctx.p(i, ctx.cell_c), ctx.p(ln["name"], ctx.cell_c), ctx.p(ln["model"], ctx.cell), ctx.p(ln["qty_total"], ctx.cell_c), ctx.p(ln["unit"], ctx.cell_c),
+                     ctx.p(plain(ln["unit_price"]), ctx.cell_r), ctx.p(plain(ln["amount"]), ctx.cell_r), ctx.p(ln.get("note") or "", ctx.cell_c)])
+        subs = [(f"{p['label']}:", f"{p['value']}{p.get('unit') or ''}") for p in ln.get("params_shown", [])]
+        if ln.get("description"):
+            subs.append(("说明:", ln["description"]))
+        for a, b in subs:
+            sub_rows.append(len(rows))
+            rows.append(["", ctx.p(a, ParagraphStyle("sa", parent=ctx.small, alignment=TA_RIGHT)), ctx.p(b, ctx.small), "", "", "", "", ""])
+        rows.append(None)  # 项目分隔线占位
+    final, seps, r = [], [], 0
+    for row in rows:
+        if row is None:
+            seps.append(len(final) - 1)
+            continue
+        final.append(row)
+    lt = Table(final, colWidths=cols, repeatRows=1)
+    st = [("LINEABOVE", (0, 0), (-1, 0), 0.8, INK), ("LINEBELOW", (0, 0), (-1, 0), 0.8, INK), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+          ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2), ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2)]
+    for s_ in seps:
+        st.append(("LINEBELOW", (0, s_), (-1, s_), 0.5, INK))
+    lt.setStyle(TableStyle(st))
+    story.append(lt)
+    story += _totals_block(ctx, W, label_total="合计：", show_upper=True, upper_left=True, compact_numbers=True)
+    story += _note_block(ctx, W)
+    story += [Spacer(1, 6 * mm), ctx.p("此致"), Spacer(1, 4 * mm), Paragraph(mx(ent["name"]), ParagraphStyle("sg", parent=ctx.base, leftIndent=12 * mm))]
+    return story
+
+
+# ============================================================ 模板 C
+def _build_c(ctx, W):
+    snap, ent = ctx.snap, ctx.ent
+    story = []
+    logo = ctx.logo(36 * mm, 20 * mm)
+    if logo:
+        logo.hAlign = "LEFT"
+        story.append(logo)
+    sm = ParagraphStyle("cs", parent=ctx.small, textColor=INK, fontSize=7.8, leading=10.2)
+    left = [Paragraph(mx(ent.get("name_en") or ""), ParagraphStyle("cen", parent=sm, fontSize=8.4))]
+    left += [Paragraph(mx(x), sm) for x in (ent.get("address_en") or "").splitlines() if x.strip()]
+    if ent.get("website"):
+        left.append(Paragraph(mx("Website: " + ent["website"]), sm))
+    if ent.get("email"):
+        left.append(Paragraph(mx("E-mail: " + ent["email"]), sm))
+    right = [Paragraph(mx(ent["name"], bold=True), ParagraphStyle("czh", parent=sm, fontName=ctx.FB, fontSize=8.6))]
+    right += [Paragraph(mx(x), sm) for x in (ent.get("address") or "").splitlines() if x.strip()]
+    if ent.get("phone"):
+        right.append(Paragraph(mx("Tel.: " + ent["phone"]), sm))
+    if ent.get("fax"):
+        right.append(Paragraph(mx("Fax: " + ent["fax"]), sm))
+    head = Table([[left, right]], colWidths=[W * 0.6, W * 0.4])
+    head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBELOW", (0, 0), (-1, 0), 1.6, BLUE_C), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+    story += [head, Spacer(1, 2 * mm)] + _title(ctx, ent.get("quote_title") or "报 价 单", size=15) + [Spacer(1, 2 * mm)]
+    rc = _contact(snap)
+    sname, sphone, smobile, semail = _sender(snap)
+    lab = ParagraphStyle("lc", parent=ctx.cell)
+    info = [
+        [ctx.p("项目：", lab), ctx.p(snap["project"]["name"]), ctx.p("报价单号：", lab), ctx.p(snap["code"])],
+        [ctx.p("To/致：", lab), ctx.p(snap["recipient"]["name"]), ctx.p(f"From/自：{sname}", lab), ""],
+        [ctx.p("Tel/座机：", lab), ctx.p(rc.get("phone") or ""), ctx.p(f"Tel/座机：{sphone or ent.get('phone') or ''}", lab), ""],
+        [ctx.p("Mobile/移动：", lab), ctx.p(rc.get("mobile") or ""), ctx.p(f"Mobile/移动：{smobile}", lab), ""],
+        [ctx.p("Attn/联系人：", lab), ctx.p(" ".join(x for x in [rc.get("name"), rc.get("position")] if x)), ctx.p(f"Email/邮箱：{semail or ent.get('email') or ''}", lab), ""],
+    ]
+    it = Table(info, colWidths=[24 * mm, W * 0.62 - 24 * mm, 20 * mm, W * 0.38 - 20 * mm])
+    it.setStyle(TableStyle([("SPAN", (2, 1), (3, 1)), ("SPAN", (2, 2), (3, 2)), ("SPAN", (2, 3), (3, 3)), ("SPAN", (2, 4), (3, 4)),
+                            ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+    story += [it, Spacer(1, 3 * mm)] + _reference_line(ctx, include_copper=True)
+    hdr = ["序号", "名称", "润滑部位" if snap.get("part_label") is None else snap["part_label"], "单位", "数量", "单价", "总价", "备注"]
+    cols = [11 * mm, 32 * mm, None, 12 * mm, 18 * mm, 21 * mm, 23 * mm, 24 * mm]
+    cols[2] = W - sum(c for c in cols if c)
+    rows = [[ctx.p(h, ctx.cell_c) for h in hdr]]
+    spans, prev, start = [], None, None
+    # 样张中连续同名系统合并“名称”单元格。合并单元格无法跨页拆分：明细超过 18 行（可能跨页）时改为逐行重复名称
+    allow_merge = len(snap["lines"]) <= 18
+    for i, ln in enumerate(snap["lines"], 1):
+        r = len(rows)
+        same = allow_merge and prev is not None and ln["name"] == prev
+        rows.append([ctx.p(i, ctx.cell_c), "" if same else ctx.p(ln["name"], ctx.cell_c), ctx.p(ln["model"], ctx.cell_c), ctx.p(ln["unit"], ParagraphStyle("ub", parent=ctx.cell_c, fontName=ctx.FB)),
+                     ctx.p(ln["qty_total"], ctx.cell_c), ctx.p(plain(ln["unit_price"]), ctx.cell_c),
+                     ctx.p(plain(ln["amount"]), ctx.cell_c), ctx.p(_c_remark(ln), ctx.cell_c)])
+        if same:
+            spans.append((start, r))
+        else:
+            start = r
+        prev = ln["name"]
+    lt = Table(rows, colWidths=cols, repeatRows=1)
+    st = [("GRID", (0, 0), (-1, -1), 0.5, INK), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]
+    merged = {}
+    for a, b in spans:
+        merged[a] = max(merged.get(a, a), b)
+    for a, b in merged.items():
+        st.append(("SPAN", (1, a), (1, b)))
+    lt.setStyle(TableStyle(st))
+    story.append(lt)
+    story += _totals_block(ctx, W, label_total="合计：", show_upper=True, upper_left=True, compact_numbers=True)
+    story += _note_block(ctx, W)
+    sign = Table([["", ctx.p(ent["name"])], ["", ctx.p(snap["quote_date"])]], colWidths=[W * 0.62, W * 0.38])
+    sign.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 6), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+    story += [Spacer(1, 10 * mm), KeepTogether([sign])]
+    return story
+
+
+def _c_remark(ln):
+    parts = [f"{p['value']}{p.get('unit') or ''}" if p.get("label") in ("润滑点数", "点数") else f"{p['label']}{p['value']}{p.get('unit') or ''}" for p in ln.get("params_shown", [])]
+    parts += [ln.get("note") or ""]
+    return "；".join(x for x in parts if x)
+
+
+# ============================================================ 共用：合计、大写、注
+def _totals_block(ctx, W, label_total, show_upper, upper_left=False, compact_numbers=False):
+    snap = ctx.snap
+    t = snap["totals"]
+    fmt = plain if compact_numbers else money_fmt
+    rows = []
+    hq = int(snap.get("host_qty") or 1)
+    if snap.get("show_tax_breakdown"):
+        # 未税单价口径：明细金额为未税额，合计区逐项列出未税合计、税额与含税合计（不让客户误把未税额当成总价）
+        rows.append([ctx.p("未税合计：", ctx.bold_r), ctx.p(fmt(t["set_net"]), ctx.bold_r)])
+        rows.append([ctx.p("税额：", ctx.bold_r), ctx.p(fmt(t["set_tax"]), ctx.bold_r)])
+        label_total = label_total.rstrip("：") + "（含税）："
+    rows.append([ctx.p(label_total, ctx.bold_r), ctx.p(fmt(t["set_gross"]), ctx.bold_r)])
+    if hq > 1:
+        rows.append([ctx.p(f"{hq}{snap.get('host_label') or '台'}总计：", ctx.bold_r), ctx.p(fmt(t["gross"]), ctx.bold_r)])
+    tt = Table(rows, colWidths=[W - 32 * mm, 32 * mm])
+    tt.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2)]))
+    out = [tt]
+    if show_upper:
+        up = rmb_upper(t["gross"])
+        if upper_left:
+            u = Table([[ctx.p("人民币金额(大写)："), ctx.p(up, ctx.bold)]], colWidths=[38 * mm, W - 38 * mm])
+            u.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, 0), 0.8, INK), ("LEFTPADDING", (0, 0), (-1, -1), 6 * mm), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
+            out.append(u)
+        else:
+            out.append(ctx.p(f"大写金额：{up}", ParagraphStyle("upr", parent=ctx.bold_r)))
+    return out
+
+
+def _note_block(ctx, W):
+    items = _terms(ctx.snap)
+    if ctx.snap.get("remark"):
+        items.append("备注：" + ctx.snap["remark"])
+    rows = [[ctx.p(f"{i}", ctx.cell_c), ctx.p(x)] for i, x in enumerate(items, 1)]
+    t = Table(rows, colWidths=[12 * mm, W - 12 * mm])
+    t.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    return [Spacer(1, 1 * mm), ctx.p("注：", ctx.bold), t]
+
+
+BUILDERS = {"A": _build_a, "B": _build_b, "C": _build_c}
+
+
+def _mark_canvas(base_cls, font, kind):
+    mark = TRIAL_MARK if kind == "TRIAL" else DRAFT_MARK
+    top = ("【试用报价】模板未经负责人签收，仅供内部试用与样张比对，不得作为正式报价发送。" if kind == "TRIAL"
+           else "【草稿预览】尚未生成冻结版本，内容可能变化，不得发送给客户。")
+
+    class MarkCanvas(base_cls):
+        def _draw_footer(self, total):
+            super()._draw_footer(total)
+            w, h = self._pagesize
+            self.saveState()
+            self.setFillColorRGB(0.78, 0.18, 0.18, alpha=0.16)
+            self.translate(w / 2, h / 2)
+            self.rotate(35)
+            draw_mixed(self, 0, 0, mark, font, 30, align="center")
+            self.restoreState()
+            self.saveState()
+            self.setFillColorRGB(0.7, 0.1, 0.1)
+            draw_mixed(self, 15 * mm, h - 7 * mm, top, font, 7.5)
+            self.restoreState()
+
+    return MarkCanvas
 
 
 def render_quote_pdf(snap: dict) -> bytes:
-    fonts = register_fonts()
-    F, FB = fonts["font"], fonts["bold"]
-    tk = snap["template_key"]
-    th = THEMES.get(tk, THEMES["A"])
-    ent = snap["legal_entity"]
+    if snap.get("template_version") == "2026.11-r2":
+        from .pdf_r2 import render_quote_pdf as r2
 
-    base = ParagraphStyle("base", fontName=F, fontSize=8.6, leading=12.2, textColor=colors.HexColor("#1f2a36"))
-    small = ParagraphStyle("small", parent=base, fontSize=7.6, leading=10.6, textColor=colors.HexColor("#4a5663"))
-    cell = ParagraphStyle("cell", parent=base, fontSize=8, leading=11)
-    cell_b = ParagraphStyle("cellb", parent=cell, fontName=FB)
-    cell_r = ParagraphStyle("cellr", parent=cell, alignment=TA_RIGHT)
-    head_c = ParagraphStyle("headc", parent=cell, fontName=FB, alignment=TA_CENTER, textColor=colors.white)
-    title_style = ParagraphStyle("title", parent=base, fontName=FB, fontSize=19, leading=24, alignment=TA_CENTER, textColor=th["primary"])
-    company_style = ParagraphStyle("company", parent=base, fontName=FB, fontSize=14, leading=18, textColor=colors.white if th["band"] else th["primary"])
-    company_sub = ParagraphStyle("companysub", parent=small, textColor=colors.HexColor("#dbe6f0") if th["band"] else colors.HexColor("#5b6772"))
-
+        return r2(snap)
+    ctx = _Ctx(snap)
+    ent = ctx.ent
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buf,
-        pagesize=A4,
-        leftMargin=15 * mm,
-        rightMargin=15 * mm,
-        topMargin=13 * mm,
-        bottomMargin=19 * mm,
-        title=f"报价单 {snap['code']}",
-        author=ent["name"],
-        subject="报价单",
-        creator="Industrial Sales Hub",
-        producer="Industrial Sales Hub",
-        invariant=1,
-        lang="zh-CN",
-    )
-    W = A4[0] - 30 * mm
-    story = []
-
-    # ---- 抬头 ----
-    contact_line = "　".join(x for x in [
-        f"地址：{ent.get('address')}" if ent.get("address") else "",
-        f"电话：{ent.get('phone')}" if ent.get("phone") else "",
-        f"传真：{ent.get('fax')}" if ent.get("fax") else "",
-        f"邮箱：{ent.get('email')}" if ent.get("email") else "",
-    ] if x)
-    header = Table([[_p(ent["name"], company_style)], [_p(contact_line, company_sub)]], colWidths=[W])
-    hs = [("LEFTPADDING", (0, 0), (-1, -1), 9 if th["band"] or tk == "B" else 0), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]
-    if th["band"]:
-        hs += [("BACKGROUND", (0, 0), (-1, -1), th["primary"]), ("TOPPADDING", (0, 0), (-1, 0), 9), ("BOTTOMPADDING", (0, -1), (-1, -1), 9)]
-    elif tk == "B":
-        hs += [("LINEBEFORE", (0, 0), (0, -1), 4, th["accent"])]
-    else:
-        hs += [("LINEBELOW", (0, -1), (-1, -1), 1.2, th["primary"])]
-    header.setStyle(TableStyle(hs))
-    story += [header, Spacer(1, 7 * mm), _p(ent.get("quote_title") or "报　价　单", title_style), Spacer(1, 5 * mm)]
-
-    # ---- 基本信息 ----
-    lab = ParagraphStyle("lab", parent=cell, textColor=colors.HexColor("#5a6571"))
-    rc = snap.get("recipient_contact") or {}
-    info = [
-        [_p("致：", lab), _p(snap["recipient"]["name"], cell_b), _p("报价编号：", lab), _p(snap["code"], cell_b)],
-        [_p("联系人：", lab), _p(" ".join(x for x in [rc.get("name"), rc.get("position")] if x) or "—", cell), _p("报价日期：", lab), _p(snap["quote_date"], cell)],
-        [_p("电话：", lab), _p(rc.get("mobile") or rc.get("phone") or "—", cell), _p("有效期：", lab), _p(f"{snap['valid_days']} 天", cell)],
-        [_p("项目名称：", lab), _p(snap["project"]["name"], cell), _p("报价人：", lab), _p(snap.get("prepared_by") or "—", cell)],
-    ]
-    it = Table(info, colWidths=[18 * mm, W * 0.5 - 18 * mm, 18 * mm, W * 0.5 - 18 * mm])
-    it.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
-    story += [it, Spacer(1, 3 * mm), _p(ent.get("intro_text") or "感谢贵司的信任与支持，现将相关产品报价如下：", small), Spacer(1, 2.5 * mm)]
-    ref = snap.get("reference") or {}
-    if any(ref.get(k) for k in ("copper", "fx", "note")):
-        parts = [x for x in [f"参考铜价：{ref['copper']}" if ref.get("copper") else "", f"参考汇率：{ref['fx']}" if ref.get("fx") else "",
-                             f"有效期至：{ref['valid_until']}" if ref.get("valid_until") else "", ref.get("note") or ""] if x]
-        story += [_p("；".join(parts) + "。上述参考值仅作报价依据说明，价格以本报价单所列为准。", small), Spacer(1, 2 * mm)]
-
-    # ---- 明细 ----
-    gross_basis = snap.get("price_basis") == "GROSS"
-    show_tax = ent.get("show_tax_columns", True)
-    cols = [9 * mm, 42 * mm, None, 11 * mm, 15 * mm, 22 * mm, 12 * mm, 25 * mm]
-    if not show_tax:
-        cols = [9 * mm, 44 * mm, None, 11 * mm, 17 * mm, 24 * mm, 27 * mm]
-    fixed = sum(c for c in cols if c)
-    cols[2] = W - fixed
-    price_label = "含税单价" if gross_basis else "未税单价"
-    headers = ["序号", "产品名称 / 型号", "技术参数", "单位", "数量", price_label, "税率", "含税金额"]
-    if not show_tax:
-        headers = ["序号", "产品名称 / 型号", "技术参数", "单位", "数量", price_label, "金额"]
-    rows = [[_p(h, head_c) for h in headers]]
-    for i, ln in enumerate(snap["lines"], 1):
-        name = f"<font name='{FB}'>{mx(ln['name'], bold=True)}</font><br/>{mx(ln['model'])}"
-        if ln.get("brand"):
-            name += f"<br/><font color='#6a7480'>{mx('品牌：' + ln['brand'])}</font>"
-        params = [mx(f"{p['label']}：{p['value']}{p.get('unit') or ''}") for p in ln.get("params_shown", [])]
-        desc = ln.get("description") or ""
-        ptxt = "<br/>".join(params)
-        if desc:
-            ptxt = (ptxt + "<br/>" if ptxt else "") + mx(desc)
-        if ln.get("remark"):
-            ptxt = (ptxt + "<br/>" if ptxt else "") + f"<font color='#8a5a12'>{mx('备注：' + ln['remark'])}</font>"
-        if D(ln.get("discount_rate", 0)) > 0:
-            pct = _fmt(D(ln['discount_rate']) * 100, 2).rstrip('0').rstrip('.')
-            ptxt = (ptxt + "<br/>" if ptxt else "") + f"<font color='#6a7480'>{mx('优惠：' + pct + '%')}</font>"
-        qty_txt = _qty(ln["qty"])
-        if ln.get("multiplier") and D(ln["multiplier"]) != 1:
-            qty_txt = f"{qty_txt}×{_qty(ln['multiplier'])}"
-        row = [
-            _p(i, ParagraphStyle("c", parent=cell, alignment=TA_CENTER)),
-            Paragraph(name, cell),
-            Paragraph(ptxt or "—", cell),
-            _p(ln["unit"], ParagraphStyle("c2", parent=cell, alignment=TA_CENTER)),
-            _p(qty_txt, cell_r),
-            _p(_fmt(ln["unit_price"]), cell_r),
-            _p(f"{(D(ln['tax_rate']) * 100).normalize():f}%", ParagraphStyle("c3", parent=cell, alignment=TA_CENTER)),
-            _p(_fmt(ln["line_gross"]), cell_r),
-        ]
-        if not show_tax:
-            del row[6]
-        rows.append(row)
-    t = snap["totals"]
-    lt = Table(rows, colWidths=cols, repeatRows=1)
-    st = [
-        ("BACKGROUND", (0, 0), (-1, 0), th["primary"]),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("VALIGN", (1, 1), (2, -1), "TOP"),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#c9d1d9")),
-        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
-        ("LEFTPADDING", (0, 0), (-1, -1), 3),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-    ]
-    for r in range(2, len(rows), 2):
-        st.append(("BACKGROUND", (0, r), (-1, r), th["light"]))
-    lt.setStyle(TableStyle(st))
-    story.append(lt)
-
-    tot_rows = [
-        [_p("未税合计", cell_r), _p("¥ " + _fmt(t["net"]), cell_r)],
-        [_p("税额合计", cell_r), _p("¥ " + _fmt(t["tax"]), cell_r)],
-        [_p("含税总计", ParagraphStyle("tb", parent=cell_r, fontName=FB)), _p("¥ " + _fmt(t["gross"]), ParagraphStyle("tg", parent=cell_r, fontName=FB, textColor=th["primary"]))],
-    ]
-    if snap.get("show_upper_amount"):
-        tot_rows.append([_p("大写金额", cell_r), _p(rmb_upper(t["gross"]), ParagraphStyle("up", parent=cell_r, fontName=FB))])
-    tt = Table(tot_rows, colWidths=[W - 62 * mm, 62 * mm])
-    tt.setStyle(TableStyle([("LINEBELOW", (0, -1), (-1, -1), 0.8, th["primary"]), ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 3)]))
-    story += [tt, Spacer(1, 5 * mm)]
-
-    # ---- 商务条款 ----
-    sec = ParagraphStyle("sec", parent=base, fontName=FB, fontSize=10, leading=14, textColor=th["primary"])
-    terms = []
-    if snap.get("delivery_terms"):
-        terms.append(f"交货期：{snap['delivery_terms']}")
-    if snap.get("payment_terms"):
-        terms.append(f"付款方式：{snap['payment_terms']}")
-    terms.append(f"报价有效期：自报价日期起 {snap['valid_days']} 天。")
-    terms += [x.strip() for x in (snap.get("terms") or "").splitlines() if x.strip()]
-    block = [_p("商务条款", sec), Spacer(1, 1.5 * mm)] + [_p(f"{i}. {x}", small) for i, x in enumerate(terms, 1)]
-    if snap.get("remark"):
-        block += [Spacer(1, 2 * mm), _p("备注：" + snap["remark"], small)]
-    story.append(KeepTogether(block))
-
-    # ---- 落款 ----
-    bank = "　".join(x for x in [f"开户行：{ent.get('bank_name')}" if ent.get("bank_name") else "", f"账号：{ent.get('bank_account')}" if ent.get("bank_account") else "", f"税号：{ent.get('tax_no')}" if ent.get("tax_no") else ""] if x)
-    sign = Table([[_p(bank, small), _p(f"{ent['name']}\n{snap['quote_date']}", ParagraphStyle("sg", parent=cell, alignment=TA_RIGHT))]], colWidths=[W * 0.6, W * 0.4])
-    sign.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "BOTTOM"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
-    story += [Spacer(1, 7 * mm), KeepTogether([sign])]
-
-    footer = f"{ent.get('short_name') or ent['name']} · {snap['code']} · {ent.get('footer_note') or '本报价单由系统生成，未经盖章仅供参考'}"
-    doc.build(story, canvasmaker=make_numbered_canvas(footer, F))
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=14 * mm, rightMargin=14 * mm, topMargin=12 * mm, bottomMargin=18 * mm,
+                            title=("【试用】" if ctx.trial else "") + f"报价单 {snap['code']}", author=ent["name"],
+                            subject="TRIAL-未签收试用报价" if ctx.trial else "报价单", creator="Industrial Sales Hub", producer="Industrial Sales Hub", invariant=1, lang="zh-CN")
+    W = A4[0] - 28 * mm
+    story = BUILDERS.get(snap["template_key"], _build_a)(ctx, W)
+    footer = f"{ent.get('short_name') or ent['name']} · {snap['code']} · 模板 {snap['template_key']}/{TEMPLATE_VERSION}"
+    footer += " · 试用（未签收）" if ctx.trial else (f" · {ent.get('footer_note')}" if ent.get("footer_note") else "")
+    canvas_cls = make_numbered_canvas(footer, ctx.F)
+    if ctx.watermark:
+        canvas_cls = _mark_canvas(canvas_cls, ctx.F, ctx.watermark)
+    doc.build(story, canvasmaker=canvas_cls)
     return buf.getvalue()

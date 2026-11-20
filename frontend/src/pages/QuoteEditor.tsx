@@ -109,6 +109,7 @@ export default function QuoteEditor() {
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [previewUrl, setPreviewUrl] = useState("");
+  const [unsigned, setUnsigned] = useState(false);
   useEffect(() => {
     if (quote && !revId) setRevId(quote.revisions[quote.revisions.length - 1]?.id);
   }, [quote, revId]);
@@ -158,14 +159,16 @@ export default function QuoteEditor() {
       fail(e);
     }
   };
-  const generate = async () => {
-    if (!confirm(`生成 ${quote.code}-V${rev.version} 的正式 PDF？生成后此版本冻结，不可再修改。`)) return;
+  const generate = async (trial = false) => {
+    const what = trial ? "试用 PDF（带“试用·模板未签收”水印，不能作为正式报价发送）" : "正式 PDF";
+    if (!confirm(`生成 ${quote.code}-V${rev.version} 的${what}？生成后此版本冻结，不可再修改。`)) return;
     setBusy(true);
     try {
-      setRev(await post(`/quote-revisions/${rev.id}/render/`));
+      setRev(await post(`/quote-revisions/${rev.id}/render/`, trial ? { trial: true } : {}));
       reloadQuote();
-      notify("PDF 已生成，版本已冻结");
+      notify(trial ? "试用 PDF 已生成（版本已冻结）。模板签收后请新建版本生成正式 PDF。" : "PDF 已生成，版本已冻结");
     } catch (e) {
+      if (e instanceof ApiError && e.code === "template_unsigned") setUnsigned(true);
       fail(e);
     } finally {
       setBusy(false);
@@ -199,7 +202,7 @@ export default function QuoteEditor() {
       <div className="toolbar">
         <span className="sub">版本：</span>
         {quote.revisions.map((r: any) => (
-          <button key={r.id} className={"btn mini " + (r.id === rev.id ? "dark" : "")} onClick={() => setRevId(r.id)}>V{r.version} {r.status === "GENERATED" ? "🔒" : "草稿"}</button>
+          <button key={r.id} className={"btn mini " + (r.id === rev.id ? "dark" : "")} onClick={() => setRevId(r.id)}>V{r.version} {r.status === "GENERATED" ? (r.is_trial ? "试用🔒" : "🔒") : "草稿"}</button>
         ))}
         {!quote.revisions.some((r: any) => r.status === "DRAFT") && quote.status !== "CANCELLED" && <button className="btn mini soft" onClick={newVersion}>+ 新版本</button>}
         <Chip s={quote.status_label} />
@@ -214,6 +217,7 @@ export default function QuoteEditor() {
       {!editable && (
         <div className="notice" style={{ marginBottom: 16 }}>
           此版本已于 {dt(rev.generated_at, true)} 由 {rev.generated_by_name} 生成并冻结（模板 {rev.template_key} · {rev.template_version}）。修改请创建新版本。
+          {rev.is_trial && <div className="err" style={{ marginTop: 6 }}>这是试用报价：模板生成时尚未经负责人签收，PDF 带“试用”水印；不能标记为已发送/已接受，也不能作为合同依据。</div>}
           <div className="hash">快照 SHA-256：{rev.snapshot_sha256}<br />PDF SHA-256：{rev.pdf_sha256}</div>
         </div>
       )}
@@ -229,7 +233,7 @@ export default function QuoteEditor() {
             <div className="totals">
               <span>未税合计</span><b className="num">{money(rev.total_net)}</b>
               <span>税额合计</span><b className="num">{money(rev.total_tax)}</b>
-              <span>含税总计</span><b className="num" style={{ fontSize: 17, color: "#0b7d74" }}>{money(rev.total_gross)}</b>
+              <span>含税总计{rev.host_qty > 1 ? `（×${rev.host_qty}${rev.host_label || "台"}）` : ""}</span><b className="num" style={{ fontSize: 17, color: "#0b7d74" }}>{money(rev.total_gross)}</b>
               <span>大写</span><b>{rev.total_upper}</b>
             </div>
           </div>
@@ -241,6 +245,8 @@ export default function QuoteEditor() {
               <Field label="报价日期"><input className="input" type="date" disabled={!editable} defaultValue={rev.quote_date} onBlur={(e) => e.target.value !== rev.quote_date && saveRev({ quote_date: e.target.value })} /></Field>
               <Field label="有效期（天）"><input className="input" disabled={!editable} defaultValue={rev.valid_days} onBlur={(e) => e.target.value !== String(rev.valid_days) && saveRev({ valid_days: e.target.value })} /></Field>
               <Field label="交货期" full><input className="input" disabled={!editable} defaultValue={rev.delivery_terms} onBlur={(e) => e.target.value !== rev.delivery_terms && saveRev({ delivery_terms: e.target.value })} placeholder="例如：合同生效后 45 天" /></Field>
+              <Field label="质保期"><input className="input" disabled={!editable} defaultValue={rev.warranty} onBlur={(e) => e.target.value !== rev.warranty && saveRev({ warranty: e.target.value })} placeholder="例如：12个月" /></Field>
+              <Field label="整单台数 × 说明" hint="明细为单台/单套时填写，如 2 台斗轮"><div className="rowactions"><input className="input" style={{ width: 70 }} disabled={!editable} defaultValue={rev.host_qty} onBlur={(e) => e.target.value !== String(rev.host_qty) && saveRev({ host_qty: e.target.value })} /><input className="input" disabled={!editable} defaultValue={rev.host_label} placeholder="台斗轮" onBlur={(e) => e.target.value !== rev.host_label && saveRev({ host_label: e.target.value })} /></div></Field>
               <Field label="付款方式" full><input className="input" disabled={!editable} defaultValue={rev.payment_terms} onBlur={(e) => e.target.value !== rev.payment_terms && saveRev({ payment_terms: e.target.value })} placeholder="例如：预付 30%，发货前付清" /></Field>
               <Field label="其他条款（每行一条）" full><textarea className="input textarea" style={{ minHeight: 110 }} disabled={!editable} defaultValue={rev.terms} onBlur={(e) => e.target.value !== rev.terms && saveRev({ terms: e.target.value })} /></Field>
               <Field label="备注" full><textarea className="input textarea" disabled={!editable} defaultValue={rev.remark} onBlur={(e) => e.target.value !== rev.remark && saveRev({ remark: e.target.value })} /></Field>
@@ -254,11 +260,13 @@ export default function QuoteEditor() {
             <div className="sectionhead"><h2>预览与生成</h2></div>
             <div className="actions">
               <button className="btn" disabled={!rev.lines.length} onClick={() => setPreviewUrl(`/api/quote-revisions/${rev.id}/preview/?t=${Date.now()}`)}>预览 PDF</button>
-              {editable && <button className="btn primary" disabled={busy || !rev.lines.length} onClick={generate}>{busy ? "生成中…" : "生成正式 PDF 并冻结"}</button>}
+              {editable && <button className="btn primary" disabled={busy || !rev.lines.length} onClick={() => generate(false)}>{busy ? "生成中…" : "生成正式 PDF 并冻结"}</button>}
+              {editable && unsigned && <button className="btn" disabled={busy || !rev.lines.length} onClick={() => generate(true)}>生成试用 PDF（带水印）</button>}
               {!editable && <a className="btn primary" href={`/api/quote-revisions/${rev.id}/pdf/`}>下载 PDF</a>}
               {!editable && <button className="btn" onClick={() => setPreviewUrl(`/api/quote-revisions/${rev.id}/pdf/?inline=1`)}>查看存档</button>}
             </div>
             {rev.last_error && <div className="err">上次生成失败：{rev.last_error}</div>}
+            {unsigned && editable && <div className="err">该出具主体的报价模板尚未经部门负责人签收（系统设置 → 出具主体）。现在只能生成带水印的试用 PDF。</div>}
             <div className="hint" style={{ marginTop: 10 }}>未经盖章的系统 PDF 仅供线下发送参考；审批与电子签章不在首期范围。</div>
           </div>
         </div>

@@ -103,6 +103,8 @@ with sync_playwright() as pw:
     for e, nm in zip(ents, ["验收甲机电设备有限公司", "验收乙工业技术有限公司", "验收丙电气科技有限公司"]):
         s, _ = api(pl, "PATCH", f"/legal-entities/{e['id']}/", {"name": nm, "short_name": nm[2:4] + "公司", "address": "验收地址", "phone": "000-0000000"})
     check("负责人维护三家出具主体", s == 200)
+    # RC2：首次安装后模板未签收 → 只能生成试用报价；签收仅负责人，按模板版本记录
+    check("首次安装后三家模板均未签收", all(e.get("signoff") is None for e in api(pl, "GET", "/legal-entities/")[1]))
     for n in ["北方重工设备有限公司", "南方港机制造股份有限公司", "华东港口产业集团"]:
         api(pl, "POST", "/accounts/", {"name": n, "kinds": ["主机厂"] if "港口" not in n else ["业主"]})
     check("负责人首页", "经营与项目总览" in pl.inner_text("body"))
@@ -149,6 +151,18 @@ with sync_playwright() as pw:
         qids.append(q["id"])
         rid = q["latest"]["id"]
         api(pas, "POST", f"/quote-revisions/{rid}/lines/", {"product": prod["id"], "qty": "2"})
+    # 未签收：正式生成被拒（409 template_unsigned），试用生成带水印且不能标记“已发送”
+    rid_trial = api(pas, "GET", f"/quotations/{qids[1]}/")[1]["latest"]["id"]
+    s, d = api(pas, "POST", f"/quote-revisions/{rid_trial}/render/")
+    check("模板未签收时正式生成被拒（409）", s == 409 and d.get("code") == "template_unsigned", (s, d))
+    s, d = api(pas, "POST", f"/quote-revisions/{rid_trial}/render/", {"trial": True})
+    check("未签收可生成试用报价（is_trial）", s == 200 and d.get("is_trial") is True, (s, d))
+    s, d = api(pas, "POST", f"/quotations/{qids[1]}/status/", {"status": "SENT"})
+    check("试用报价不能标记已发送（409）", s == 409 and d.get("code") == "trial_quote", (s, d))
+    s, _ = api(pas, "POST", f"/legal-entities/{ents[0]['id']}/signoff/", {"note": "E2E：商务尝试签收"})
+    check("商务不能签收模板（403）", s == 403, s)
+    s, d = api(pl, "POST", f"/legal-entities/{ents[0]['id']}/signoff/", {"note": "E2E：负责人按虚构样张核对后签收"})
+    check("负责人签收模板 A（记录版本/责任人）", s == 201 and d["signoff"]["signed_by"] == "张经理" and d["signoff"]["template_version"], (s, d))
     pas.goto(f"{BASE}/quotes/{qids[0]}")
     pas.wait_for_selector("text=报价明细")
     first = pas.locator(".linebox").first
@@ -177,10 +191,13 @@ with sync_playwright() as pw:
     check("创建 V2 草稿", pas.locator("button:has-text('V2')").count() == 1)
     r2 = pas.request.get(f"{BASE}/api/quote-revisions/{v1['id']}/pdf/")
     check("V2 创建后 V1 原字节不变", hashlib.sha256(r2.body()).hexdigest() == v1["pdf_sha256"])
-    # 第二份报价生成
-    q2 = api(pas, "GET", f"/quotations/{qids[1]}/")[1]
-    s, _ = api(pas, "POST", f"/quote-revisions/{q2['latest']['id']}/render/")
-    check("第二家公司/客户报价生成", s == 200)
+    # 第二份报价：V1 是试用版本；负责人签收模板 B 后新建 V2 生成正式版本
+    s, _ = api(pl, "POST", f"/legal-entities/{ents[1]['id']}/signoff/", {"note": "E2E：负责人按虚构样张核对后签收 B"})
+    s, nv = api(pas, "POST", f"/quotations/{qids[1]}/revisions/")
+    s, d = api(pas, "POST", f"/quote-revisions/{nv['id']}/render/")
+    check("第二家公司/客户：签收后新版本生成正式报价", s == 200 and d.get("is_trial") is False, (s, d))
+    s, _ = api(pas, "POST", f"/quotations/{qids[1]}/status/", {"status": "SENT"})
+    check("正式版本可标记已发送", s == 200, s)
 
     # ---------- 销售越权反例 ----------
     for path in [f"/quotations/{qids[0]}/", f"/quote-revisions/{v1['id']}/", f"/projects/{pid}/finance/"]:

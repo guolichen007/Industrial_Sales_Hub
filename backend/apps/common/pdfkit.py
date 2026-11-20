@@ -124,6 +124,8 @@ def draw_mixed(c, x, y, text, font, size, align="left"):
     total = sum(widths)
     if align == "right":
         x -= total
+    elif align == "center":
+        x -= total / 2
     for (lat, seg), w in zip(runs, widths):
         c.setFont(LATIN if lat else font, size)
         c.drawString(x, y, seg)

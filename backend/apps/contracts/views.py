@@ -60,6 +60,8 @@ class OrderSerializer(serializers.ModelSerializer):
                 data["quote_revision"] = rev
             elif rev.quote_id != q.id or rev.status != QuoteRevision.GENERATED:
                 raise serializers.ValidationError({"quote_revision": "必须选择该报价已生成（冻结）的版本"})
+            if data["quote_revision"].is_trial:
+                raise serializers.ValidationError({"quote_revision": "试用报价（模板未签收）不能作为合同/订单依据"})
             if data.get("legal_entity") and data["legal_entity"].id != q.legal_entity_id:
                 raise serializers.ValidationError({"legal_entity": "出具主体必须与报价一致"})
             if data.get("customer") and data["customer"].id != q.recipient_id:

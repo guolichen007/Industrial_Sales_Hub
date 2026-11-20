@@ -49,6 +49,11 @@ class QuoteRevision(models.Model):
     ref_valid_until = models.DateField("参考价有效期至", null=True, blank=True)
     ref_note = models.CharField("参考价说明", max_length=200, blank=True)
     price_basis = models.CharField(max_length=8, default="NET")  # 创建时取自出具主体，生成时冻结
+    # RC2（模板 r3）：整单乘数（例如“2 台斗轮”：明细为单台/单套，合计 × 台数 = 总计）、质保期、试用标记
+    host_qty = models.PositiveIntegerField("整单台数", default=1)
+    host_label = models.CharField("台数说明", max_length=20, blank=True)  # 例如“台斗轮”→ 打印“2台斗轮总计”
+    warranty = models.CharField("质保期", max_length=100, blank=True)
+    is_trial = models.BooleanField("试用报价（模板未签收）", default=False)
     lock_version = models.PositiveIntegerField(default=0)  # 草稿乐观并发版本号
     total_net = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0"))
     total_tax = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal("0"))

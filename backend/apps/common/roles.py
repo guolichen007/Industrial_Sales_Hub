@@ -26,6 +26,7 @@ CAP = {
     "system.status": {ADMIN, LEADER},
     "audit.read": {ADMIN, LEADER},
     "legal_entity.write": {ADMIN, LEADER, ASSISTANT},
+    "template.signoff": {LEADER},  # RC2：报价模板签收仅部门负责人
     # ---- 主数据 ----
     "product.write": {LEADER, ASSISTANT},
     "product.see_price": {LEADER, ASSISTANT},

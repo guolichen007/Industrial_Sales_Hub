@@ -63,10 +63,10 @@ class RevisionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = QuoteRevision
-        fields = ["id", "quote", "version", "code", "status", "quote_date", "valid_days", "delivery_terms", "payment_terms", "terms", "remark", "show_upper_amount",
+        fields = ["id", "quote", "version", "code", "status", "is_trial", "quote_date", "valid_days", "delivery_terms", "payment_terms", "warranty", "host_qty", "host_label", "terms", "remark", "show_upper_amount",
                   "ref_copper_price", "ref_exchange_rate", "ref_valid_until", "ref_note", "price_basis", "lock_version",
                   "total_net", "total_tax", "total_gross", "total_upper", "snapshot_sha256", "template_key", "template_version", "pdf_sha256", "pdf_size", "last_error", "generated_by_name", "generated_at", "created_at", "lines"]
-        read_only_fields = ["quote", "version", "status", "price_basis", "lock_version", "total_net", "total_tax", "total_gross", "snapshot_sha256", "template_key", "template_version", "pdf_sha256", "pdf_size", "last_error", "generated_at"]
+        read_only_fields = ["quote", "version", "status", "is_trial", "price_basis", "lock_version", "total_net", "total_tax", "total_gross", "snapshot_sha256", "template_key", "template_version", "pdf_sha256", "pdf_size", "last_error", "generated_at"]
 
     def get_lines(self, obj):
         return QuoteLineSerializer(QuoteLine.objects.filter(revision_id=obj.pk).order_by("sort", "id"), many=True).data
@@ -86,6 +86,11 @@ class RevisionSerializer(serializers.ModelSerializer):
 
         if v and not (datetime.date(2000, 1, 1) <= v <= datetime.date(2100, 12, 31)):
             raise serializers.ValidationError("日期超出范围")
+        return v
+
+    def validate_host_qty(self, v):
+        if not (1 <= v <= 999):
+            raise serializers.ValidationError("整单台数应在 1～999")
         return v
 
     def validate_valid_days(self, v):
@@ -117,7 +122,7 @@ class QuoteSerializer(serializers.ModelSerializer):
         return {"id": r.id, "version": r.version, "status": r.status, "total_gross": str(r.total_gross), "quote_date": r.quote_date, "valid_until": valid_until}
 
     def get_revisions(self, obj):
-        return [{"id": r.id, "version": r.version, "status": r.status, "total_gross": str(r.total_gross), "pdf_sha256": r.pdf_sha256, "generated_at": r.generated_at} for r in obj.revisions.order_by("version")]
+        return [{"id": r.id, "version": r.version, "status": r.status, "is_trial": r.is_trial, "total_gross": str(r.total_gross), "pdf_sha256": r.pdf_sha256, "generated_at": r.generated_at} for r in obj.revisions.order_by("version")]
 
     def validate(self, data):
         rc = data.get("recipient_contact")
@@ -189,6 +194,10 @@ class QuoteViewSet(viewsets.ModelViewSet):
         new = request.data.get("status")
         if not isinstance(new, str) or new not in STATUS_FLOW.get(q.status, set()):
             raise BusinessError(f"不能从「{q.get_status_display()}」变更为「{STATUS_LABELS.get(new, new) if isinstance(new, str) else '无效状态'}」", code="bad_transition")
+        if new in ("SENT", "ACCEPTED"):
+            latest = q.revisions.filter(status=QuoteRevision.GENERATED).order_by("-version").first()
+            if latest is None or latest.is_trial:
+                raise BusinessError("最新生成的版本是“试用报价”（模板未签收），不能标记为已发送/已接受。请在模板签收后生成正式版本。", code="trial_quote")
         if q.status == "ACCEPTED" and q.orders.filter(status="CONFIRMED").exists():
             raise BusinessError("该报价已有有效的合同/订单确认，不能改回其他状态；请先撤销确认。", code="has_order")
         old = q.get_status_display()
@@ -309,15 +318,17 @@ class RevisionViewSet(viewsets.GenericViewSet):
 
     @action(detail=True, methods=["post"])
     def render(self, request, pk=None):
+        """生成并冻结。模板未签收时必须显式 trial=true，生成带水印的试用报价；否则 409 template_unsigned。"""
         self.get_object()
+        trial = request.data.get("trial") in (True, "true", "1", 1)
         try:
-            rev = services.generate_revision(int(pk), request.user)
+            rev = services.generate_revision(int(pk), request.user, trial=trial)
         except services.PdfFailed as e:
             audit(request, "generate_pdf_failed", "quote_revision", pk, f"报价 PDF 生成失败：{e.message[:120]}")
             resp = Response({"code": "pdf_failed", "message": f"PDF 生成失败，草稿已保留，可修正后重试：{e.message}", "field_errors": {}, "request_id": getattr(request, "request_id", "")}, status=500)
             resp._ish_commit = True  # 提交 last_error 与审计记录（草稿内容未改变）
             return resp
-        audit(request, "generate_pdf", "quote_revision", rev.id, f"生成报价 PDF {rev.code}", {"pdf_sha256": rev.pdf_sha256, "snapshot_sha256": rev.snapshot_sha256})
+        audit(request, "generate_pdf", "quote_revision", rev.id, f"生成{'试用' if rev.is_trial else '正式'}报价 PDF {rev.code}", {"pdf_sha256": rev.pdf_sha256, "snapshot_sha256": rev.snapshot_sha256, "trial": rev.is_trial})
         return Response(RevisionSerializer(_fresh(rev.pk)).data)
 
     @action(detail=True, methods=["get"])
@@ -330,7 +341,11 @@ class RevisionViewSet(viewsets.GenericViewSet):
             pdf = services.read_revision_pdf(rev)
         else:
             services.recalc_revision(rev, save=False)
-            pdf = render_quote_pdf(services.build_snapshot(rev))
+            signed, _so = services.signoff_state(rev.quote.legal_entity)
+            snap = services.build_snapshot(rev)
+            snap["trial"] = not signed
+            snap["watermark"] = "DRAFT" if signed else "TRIAL"  # 草稿预览永远带水印
+            pdf = render_quote_pdf(snap)
         resp = HttpResponse(pdf, content_type="application/pdf")
         resp["Content-Disposition"] = f'inline; filename="preview-{rev.id}.pdf"'
         return resp
@@ -344,8 +359,10 @@ class RevisionViewSet(viewsets.GenericViewSet):
         audit(request, "download_pdf", "quote_revision", rev.id, f"下载报价 PDF {rev.code}")
         resp = HttpResponse(data, content_type="application/pdf")
         disp = "inline" if request.query_params.get("inline") == "1" else "attachment"
-        fname = f"{rev.code}.pdf"
-        resp["Content-Disposition"] = f"{disp}; filename=\"{fname}\"; filename*=UTF-8''{urlquote(fname)}"
+        fname = f"{'试用-' if rev.is_trial else ''}{rev.code}.pdf"
+        ascii_name = f"{'TRIAL-' if rev.is_trial else ''}{rev.code}.pdf"
+        resp["Content-Disposition"] = f"{disp}; filename=\"{ascii_name}\"; filename*=UTF-8''{urlquote(fname)}"
+        resp["X-Quote-Trial"] = "1" if rev.is_trial else "0"
         resp["X-Content-SHA256"] = rev.pdf_sha256
         return resp
 

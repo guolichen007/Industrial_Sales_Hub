@@ -61,7 +61,8 @@ def _make(client_for, base, entity, lines, render=True, **rev):
         rr = c.post(f"/api/quote-revisions/{rid}/lines/", ln, format="json")
         assert rr.status_code == 201, rr.content
     if render:
-        assert c.post(f"/api/quote-revisions/{rid}/render/").status_code == 200
+        rr = c.post(f"/api/quote-revisions/{rid}/render/")
+        assert rr.status_code == 200, rr.content.decode()[:600]
     return rid
 
 
@@ -103,14 +104,19 @@ def test_special_characters_render_and_are_extractable(client_for, base):
         assert s in t, s
 
 
-def test_gross_basis_and_no_tax_column_template(client_for, base):
+def test_gross_basis_and_no_tax_column_template(client_for, base, users):
+    """RC2 调整说明：r3 模板 C 按真实样张只有“单价/总价”列（含税口径在条款中说明），不再打印“含税单价”列名；
+    改为验证：GROSS 口径不出现未税合计/税额行、标题可配置、无税率列、乘数与金额正确。另：价税口径属于签收绑定配置，修改后需重新签收。"""
+    from tests.conftest import sign_template
+
     ent = LegalEntity.objects.get(code="C")
     ent.price_basis, ent.show_tax_columns, ent.quote_title = "GROSS", False, "产 品 报 价 单"
     ent.save()
+    sign_template(ent, users["leader"])
     rid = _make(client_for, base, ent, [{"name": "电缆", "model": "C", "unit": "米", "qty": "120", "multiplier": "2", "unit_price": "113", "tax_rate": "0.13"}])
     t = re.sub(r"\s+", "", _text(client_for("assistant").get(f"/api/quote-revisions/{rid}/pdf/").content))
-    assert "含税单价" in t and "未税单价" not in t and "产品报价单" in t and "税率" not in t
-    assert "27,120.00" in t and "120×2" in t
+    assert "未税合计" not in t and "税额" not in t and "产品报价单" in t and "税率" not in t
+    assert "27120" in t and "120×2" in t
 
 
 def test_empty_contact_and_zero_amount(client_for, base):
