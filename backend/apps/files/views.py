@@ -2,6 +2,8 @@
 import hashlib
 from pathlib import Path
 
+from django.db.models import Q
+
 from django.conf import settings
 from django.http import HttpResponse
 from rest_framework import serializers
@@ -82,8 +84,16 @@ def _sales_visible_ok(user, att):
             and visible_projects(user).filter(pk=att.owner_id).exists())
 
 
+def _klass_ok_for(user, att):
+    """P0 修复：销售即使能编辑项目，也只能看到“售前资料”与“已授权销售可见的交付附件”；
+    商务/负责人上传的“内部”附件（可能是报价、合同、比价）对销售不可见。"""
+    if att.owner_type != "project" or user.role != "SALES":
+        return True
+    return att.klass == "PRESALE" or (att.klass == "DELIVERY" and att.sales_visible)
+
+
 def can_read_attachment(user, att):
-    return _owner_access(user, att.owner_type, att.owner_id) or _sales_visible_ok(user, att)
+    return (_owner_access(user, att.owner_type, att.owner_id) and _klass_ok_for(user, att)) or _sales_visible_ok(user, att)
 
 
 class AttachmentSerializer(serializers.ModelSerializer):
@@ -100,6 +110,8 @@ class AttachmentListView(APIView):
         oid = int_param(request.query_params.get("owner_id"), "owner_id", required=True)
         qs = Attachment.objects.filter(owner_type=ot, owner_id=oid)
         if ot and _owner_access(request.user, ot, oid):
+            if ot == "project" and request.user.role == "SALES":
+                qs = qs.filter(Q(klass="PRESALE") | Q(klass="DELIVERY", sales_visible=True))
             return Response(AttachmentSerializer(qs, many=True).data)
         # 无编辑权的销售：只列出该项目中显式授权“销售可见”的交付/进度附件
         if ot == "project" and can(request.user, "project.read"):
@@ -126,8 +138,8 @@ class AttachmentListView(APIView):
         if not any(data.startswith(sig) for sig in ALLOWED[ext]):
             raise BusinessError("文件内容与扩展名不符", code="bad_signature", http_status=400)
         name = Path(f.name).name.replace("\\", "_")[:200]
-        klass = str(request.data.get("klass") or ("PRESALE" if request.user.role == "SALES" else "INTERNAL"))
-        if klass not in dict(Attachment.CLASSES) or ot != "project" and klass != "INTERNAL":
+        klass = request.data.get("klass") or ("PRESALE" if request.user.role == "SALES" else "INTERNAL")
+        if not isinstance(klass, str) or klass not in dict(Attachment.CLASSES) or ot != "project" and klass != "INTERNAL":
             raise BusinessError("附件类别无效（只有项目附件可选择售前资料/交付进度）", code="bad_class", http_status=400)
         if request.user.role == "SALES" and klass != "PRESALE":
             klass = "PRESALE"  # 销售上传的一律为受控的售前资料
@@ -158,15 +170,14 @@ class AttachmentDetailView(APIView):
         from django.utils import timezone
 
         att = Attachment.objects.filter(pk=pk).first()
-        if not att or not _owner_access(request.user, att.owner_type, att.owner_id, write=True):
-            raise PermissionDenied("无权修改该附件")
+        # 分类与授权只允许商务/负责人，且必须对所属对象有写权限（P2：销售不能撤回他人授权、财务不能借 PATCH 探测订单附件）
+        if not att or not can(request.user, "project.edit_any") or not _owner_access(request.user, att.owner_type, att.owner_id, write=True):
+            raise PermissionDenied("只有商务助理或部门负责人可以设置附件类别与销售可见")
         klass = request.data.get("klass", att.klass)
         sv = request.data.get("sales_visible", att.sales_visible)
         sv = sv in (True, "true", "1", 1)
-        if klass not in dict(Attachment.CLASSES) or (att.owner_type != "project" and klass != "INTERNAL"):
+        if not isinstance(klass, str) or klass not in dict(Attachment.CLASSES) or (att.owner_type != "project" and klass != "INTERNAL"):
             raise BusinessError("附件类别无效", code="bad_class", http_status=400)
-        if (sv or klass != att.klass) and not can(request.user, "project.edit_any"):
-            raise PermissionDenied("只有商务助理或部门负责人可以设置附件类别与销售可见")
         if sv and klass != "DELIVERY":
             raise BusinessError("只有“交付/进度”类附件可以授权销售可见；合同、报价、内部资料不得对销售开放", code="not_delivery")
         changed = sv != att.sales_visible
@@ -179,7 +190,7 @@ class AttachmentDetailView(APIView):
 
     def delete(self, request, pk):
         att = Attachment.objects.filter(pk=pk).first()
-        if not att or not _owner_access(request.user, att.owner_type, att.owner_id, write=True):
+        if not att or not _owner_access(request.user, att.owner_type, att.owner_id, write=True) or not _klass_ok_for(request.user, att):
             raise PermissionDenied("无权删除该附件")
         if att.uploaded_by_id != request.user.id and request.user.role != "LEADER":
             raise PermissionDenied("只能删除自己上传的附件（负责人可删除任意附件）")

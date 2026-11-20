@@ -111,6 +111,8 @@ class OrderViewSet(viewsets.ModelViewSet):
         confirm_now = bool_param(data.pop("confirm_now", False))
         if not can(user, "order.amount") and data.get("contract_amount") not in (None, ""):
             raise PermissionDenied("当前角色不能录入合同金额（由负责人或商务维护）")
+        if not can(user, "quote.access") and (data.get("quote") not in (None, "") or data.get("quote_revision") not in (None, "")):
+            raise PermissionDenied("当前角色不能关联报价（D2/D5：报价信息仅负责人与商务可见）")
         s = OrderSerializer(data=data)
         s.is_valid(raise_exception=True)
         fp = services.fingerprint({**s.validated_data, "confirm_now": confirm_now})

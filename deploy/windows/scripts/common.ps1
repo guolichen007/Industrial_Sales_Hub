@@ -266,6 +266,8 @@ function Enter-OpsLock([string]$task, [int]$waitSec = 0) {
         try {
             $script:OpsHandle = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
             break
+        } catch [System.UnauthorizedAccessException] {
+            return $null, "无权访问 $lockPath：请右键以管理员身份运行。"
         } catch {
             if ((Get-Date) -ge $deadline) {
                 $o = $null
@@ -276,8 +278,17 @@ function Enter-OpsLock([string]$task, [int]$waitSec = 0) {
             Start-Sleep -Milliseconds 500
         }
     }
+    # 上一个任务的父窗口被强制关闭时，操作系统已释放锁，但它启动的 manage.py 子进程可能仍在运行：此时视为忙
+    $prev = $null; try { $prev = Get-Content -LiteralPath (Join-Path $script:Data 'ops.owner.json') -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $prev = $null }
+    if ($prev -and $prev.token -and $prev.PSObject.Properties['children']) {
+        $alive = @($prev.children | Where-Object { $_ -and (Get-Process -Id $_ -ErrorAction SilentlyContinue) })
+        if ($alive.Count) {
+            $script:OpsHandle.Close(); $script:OpsHandle = $null
+            return $null, ("上一个运维任务（{0}）的子进程仍在运行（PID {1}），可能是窗口被强制关闭。请等待其结束后重试。" -f $prev.task, ($alive -join ','))
+        }
+    }
     $script:OpsToken = (New-RandomSecret 16) -replace '[^A-Za-z0-9]', 'x'
-    $info = [ordered]@{ task = $task; token = $script:OpsToken; pid = $PID; host = $env:COMPUTERNAME; started_at = (Get-Date -Format s) }
+    $info = [ordered]@{ task = $task; token = $script:OpsToken; pid = $PID; host = $env:COMPUTERNAME; started_at = (Get-Date -Format s); children = @() }
     Write-AtomicText (Join-Path $script:Data 'ops.owner.json') ($info | ConvertTo-Json -Compress)
     Add-Content -LiteralPath (Join-Path $script:Data 'ops.history.log') -Value (([ordered]@{ event = 'acquire'; task = $task; pid = $PID; at = (Get-Date -Format s) }) | ConvertTo-Json -Compress) -Encoding UTF8
     $env:ISH_OPS_TOKEN = $script:OpsToken   # 子进程 manage.py 继承同一运维任务
@@ -289,7 +300,7 @@ function Exit-OpsLock {
         try {
             $owner = Join-Path $script:Data 'ops.owner.json'
             $o = Get-Content -LiteralPath $owner -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($o.token -eq $script:OpsToken) { $o.token = ''; Write-AtomicText $owner ($o | ConvertTo-Json -Compress) }
+            if ($o.token -eq $script:OpsToken) { $o.token = ''; Write-AtomicText $owner ($o | ConvertTo-Json -Compress -Depth 4) }
             Add-Content -LiteralPath (Join-Path $script:Data 'ops.history.log') -Value (([ordered]@{ event = 'release'; pid = $PID; at = (Get-Date -Format s) }) | ConvertTo-Json -Compress) -Encoding UTF8
         } catch { Write-IshLog "ops owner update failed: $($_.Exception.Message)" }
         $script:OpsHandle.Close(); $script:OpsHandle = $null

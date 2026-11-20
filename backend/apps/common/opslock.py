@@ -98,6 +98,52 @@ def _busy_message():
     return f"另一个运维任务正在进行：{o.get('task', '未知')}（开始于 {o.get('started_at', '?')}，进程 {o.get('pid', '?')}）。请稍后重试。"
 
 
+def pid_alive(pid) -> bool:
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        h = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        code = ctypes.c_ulong()
+        ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(code))
+        ctypes.windll.kernel32.CloseHandle(h)
+        return code.value == 259  # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _register_child(token):
+    """继承父进程运维 token 的子进程（manage.py）登记自己的 PID：父进程被强制结束、操作系统释放锁后，
+    新任务仍会因“子进程仍在运行”而判定为忙，避免与仍在执行的恢复/升级子进程并发。"""
+    _lock, owner, _h = _paths()
+    o = read_owner() or {}
+    if o.get("token") != token:
+        return
+    kids = [k for k in o.get("children", []) if pid_alive(k)]
+    if os.getpid() not in kids:
+        kids.append(os.getpid())
+    o["children"] = kids
+    _atomic_write(owner, json.dumps(o, ensure_ascii=False))
+
+
+def _orphan_children(prev):
+    if not prev or not prev.get("token"):
+        return []
+    return [k for k in prev.get("children", []) if pid_alive(k) and k != os.getpid()]
+
+
 def current_token():
     return _current.get()
 
@@ -131,6 +177,8 @@ def ops_lock(task: str, wait: float = 0):
     """获取全局运维锁；wait 秒内拿不到则抛 OpsBusy。返回 token。"""
     tok = inherited_token()
     if tok:
+        if not _current.get():
+            _register_child(tok)
         reset = _current.set(tok)
         try:
             yield tok
@@ -153,9 +201,14 @@ def ops_lock(task: str, wait: float = 0):
         if time.time() >= deadline:
             raise OpsBusy(_busy_message())
         time.sleep(0.5)
-    token = secrets.token_hex(16)
-    info = {"task": task, "token": token, "pid": os.getpid(), "host": socket.gethostname(), "started_at": datetime.now().isoformat(timespec="seconds")}
     prev = read_owner()
+    orphans = _orphan_children(prev)
+    if orphans:
+        _unlock(fh)
+        fh.close()
+        raise OpsBusy(f"上一个运维任务（{prev.get('task')}）的子进程仍在运行（PID {orphans}），可能是父窗口被强制关闭。请等待其结束后重试。")
+    token = secrets.token_hex(16)
+    info = {"task": task, "token": token, "pid": os.getpid(), "host": socket.gethostname(), "started_at": datetime.now().isoformat(timespec="seconds"), "children": []}
     _atomic_write(owner, json.dumps(info, ensure_ascii=False))
     with open(hist, "a", encoding="utf-8") as h:
         h.write(json.dumps({"event": "acquire", **{k: v for k, v in info.items() if k != "token"}, "previous": (prev or {}).get("task")}, ensure_ascii=False) + "\n")

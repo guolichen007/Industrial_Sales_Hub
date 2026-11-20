@@ -87,6 +87,7 @@ class LegalEntityViewSet(viewsets.ModelViewSet):
 
             raise PermissionDenied("仅部门负责人可撤销签收")
         e = self.get_object()
+        e = LegalEntity.objects.select_for_update().get(pk=e.pk)
         so = e.current_signoff()
         if not so:
             raise BusinessError("当前没有有效签收", code="not_signed")

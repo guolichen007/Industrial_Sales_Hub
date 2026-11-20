@@ -102,7 +102,9 @@ def confirm_order(order_id: int, user) -> OrderConfirmation:
             from apps.quotations.models import Quote
 
             q = Quote.objects.select_for_update().get(pk=order.quote_id)
-            if q.status in ("GENERATED", "SENT", "LOST"):
+            latest = q.revisions.filter(status="GENERATED").order_by("-version").first()
+            # 最新生成版本为试用报价时不改报价状态（订单本身绑定的是已冻结的正式版本）
+            if q.status in ("GENERATED", "SENT", "LOST") and latest is not None and not latest.is_trial:
                 q.status = "ACCEPTED"
                 q.save(update_fields=["status", "updated_at"])
         if project.execution_phase == "暂停":

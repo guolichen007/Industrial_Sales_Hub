@@ -97,6 +97,7 @@ class Command(BaseCommand):
         parser.add_argument("--lock-timeout", type=int, default=300, help="等待进行中写事务的最长秒数")
         parser.add_argument("--label", default="")
         parser.add_argument("--lock-wait", type=float, default=0, help="等待其他运维任务结束的最长秒数（默认不等待，忙则退出码 75）")
+        parser.add_argument("--no-prune", action="store_true", help="不清理过期备份（恢复/升级前的安全备份使用）")
 
     def handle(self, *args, lock_wait=0, **kw):
         from apps.common.opslock import OpsBusy, ops_lock
@@ -108,7 +109,7 @@ class Command(BaseCommand):
         except OpsBusy as e:
             raise CommandError(str(e), returncode=BUSY_EXIT)
 
-    def _handle(self, dest, keep_days, pg_bin, copy_to, lock_timeout, label, **kw):
+    def _handle(self, dest, keep_days, pg_bin, copy_to, lock_timeout, label, no_prune=False, **kw):
         dest = Path(dest)
         dest.mkdir(parents=True, exist_ok=True)
         free = shutil.disk_usage(dest).free
@@ -167,7 +168,8 @@ class Command(BaseCommand):
                     shutil.rmtree(ctmp, ignore_errors=True)
                 self.stderr.write(f"警告：异盘/异机副本失败：{e}")
                 copied = f"失败：{e}"
-        self._prune(dest, keep_days, final)
+        if not no_prune:
+            self._prune(dest, keep_days, final)
         total = sum(f.stat().st_size for f in final.rglob("*") if f.is_file())
         write_status(ok=True, task_token=self._token, path=str(final), size_mb=round(total / 2**20, 2), seconds=elapsed, copy=copied, files=len(manifest["files"]))
         self.backup_path = final
@@ -237,6 +239,9 @@ class Command(BaseCommand):
         cutoff = datetime.now() - timedelta(days=keep_days)
         for d in sorted(dest.glob("ish-backup-*")):
             if d == keep or not d.is_dir():
+                continue
+            # 恢复/升级生成的安全备份（before-restore / pre-upgrade）被运维日志引用，自动清理永不删除，由管理员确认后手工清理
+            if "-before-restore" in d.name or "-pre-upgrade" in d.name:
                 continue
             if datetime.fromtimestamp(d.stat().st_mtime) < cutoff:
                 shutil.rmtree(d, ignore_errors=True)

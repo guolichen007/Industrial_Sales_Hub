@@ -346,12 +346,12 @@
    "detail": ""
   },
   {
-   "name": "普通 API P95 ≤ 1000ms（实测 101.5 ms）",
+   "name": "普通 API P95 ≤ 1000ms（实测 102.2 ms）",
    "pass": true,
    "detail": ""
   },
   {
-   "name": "PDF 生成/下载 P95 ≤ 5000ms（实测 227.8 ms）",
+   "name": "PDF 生成/下载 P95 ≤ 5000ms（实测 216.0 ms）",
    "pass": true,
    "detail": ""
   },
@@ -363,12 +363,12 @@
  ],
  "perf": {
   "api_requests": 255,
-  "api_p50_ms": 14.4,
-  "api_p95_ms": 101.5,
-  "api_max_ms": 133.1,
+  "api_p50_ms": 14.3,
+  "api_p95_ms": 102.2,
+  "api_max_ms": 127.6,
   "pdf_requests": 4,
-  "pdf_p95_ms": 227.8,
-  "pdf_max_ms": 227.8,
+  "pdf_p95_ms": 216.0,
+  "pdf_max_ms": 216.0,
   "http_5xx": 0
  },
  "js_errors": [],
@@ -376,177 +376,177 @@
   [
    "POST",
    "/api/quote-revisions/{id}/render/",
-   227.77,
+   216.045,
    200,
    "assistant"
   ],
   [
    "POST",
    "/api/users/",
-   133.062,
+   127.554,
    201,
    "ciadmin"
   ],
   [
    "POST",
    "/api/auth/login/",
-   114.623,
+   117.624,
    200,
    "ciadmin"
   ],
   [
    "POST",
    "/api/auth/login/",
-   105.593,
+   105.188,
+   200,
+   "assistant"
+  ],
+  [
+   "POST",
+   "/api/users/",
+   104.943,
+   201,
+   "ciadmin"
+  ],
+  [
+   "POST",
+   "/api/users/",
+   104.182,
+   201,
+   "ciadmin"
+  ],
+  [
+   "POST",
+   "/api/auth/login/",
+   103.944,
+   200,
+   "sales"
+  ],
+  [
+   "POST",
+   "/api/auth/login/",
+   103.434,
+   200,
+   "sales"
+  ],
+  [
+   "POST",
+   "/api/auth/login/",
+   103.126,
+   200,
+   "sales"
+  ],
+  [
+   "POST",
+   "/api/auth/login/",
+   103.02,
+   200,
+   "leader"
+  ],
+  [
+   "POST",
+   "/api/auth/login/",
+   102.706,
    200,
    "finance"
   ],
   [
    "POST",
+   "/api/users/",
+   102.589,
+   201,
+   "ciadmin"
+  ],
+  [
+   "POST",
    "/api/auth/login/",
-   105.314,
+   102.215,
    200,
    "sales2"
   ],
   [
    "POST",
-   "/api/auth/login/",
-   104.567,
-   200,
-   "leader"
-  ],
-  [
-   "POST",
    "/api/users/",
-   104.362,
+   102.188,
    201,
    "ciadmin"
-  ],
-  [
-   "POST",
-   "/api/auth/login/",
-   104.358,
-   200,
-   "sales"
-  ],
-  [
-   "POST",
-   "/api/users/",
-   103.403,
-   201,
-   "ciadmin"
-  ],
-  [
-   "POST",
-   "/api/users/",
-   103.359,
-   201,
-   "ciadmin"
-  ],
-  [
-   "POST",
-   "/api/auth/login/",
-   103.009,
-   200,
-   "assistant"
-  ],
-  [
-   "POST",
-   "/api/users/",
-   102.805,
-   201,
-   "ciadmin"
-  ],
-  [
-   "POST",
-   "/api/auth/login/",
-   102.297,
-   200,
-   "sales"
-  ],
-  [
-   "POST",
-   "/api/auth/login/",
-   101.462,
-   200,
-   "sales"
   ],
   [
    "GET",
    "/api/projects/{id}/related/",
-   52.45,
-   200,
-   "assistant"
-  ],
-  [
-   "GET",
-   "/api/projects/{id}/related/",
-   49.693,
+   49.906,
    200,
    "leader"
   ],
   [
    "GET",
-   "/api/projects/{id}/",
-   46.801,
+   "/api/projects/{id}/related/",
+   48.036,
    200,
    "assistant"
   ],
   [
    "GET",
    "/api/projects/{id}/",
-   43.55,
+   42.868,
    200,
    "finance"
   ],
   [
    "GET",
    "/api/projects/{id}/",
-   42.609,
-   200,
-   "sales"
-  ],
-  [
-   "GET",
-   "/api/projects/{id}/updates/",
-   37.492,
-   200,
-   "assistant"
-  ],
-  [
-   "POST",
-   "/api/quote-revisions/{id}/render/",
-   36.527,
-   200,
-   "assistant"
-  ],
-  [
-   "GET",
-   "/api/projects/{id}/",
-   36.225,
-   200,
-   "leader"
-  ],
-  [
-   "GET",
-   "/api/dashboard/",
-   33.501,
+   42.703,
    200,
    "leader"
   ],
   [
    "GET",
    "/api/projects/{id}/",
-   32.644,
+   41.538,
+   200,
+   "assistant"
+  ],
+  [
+   "GET",
+   "/api/projects/{id}/",
+   38.117,
+   200,
+   "assistant"
+  ],
+  [
+   "GET",
+   "/api/projects/",
+   36.514,
+   200,
+   "assistant"
+  ],
+  [
+   "GET",
+   "/api/projects/{id}/",
+   36.044,
    200,
    "sales"
   ],
   [
    "GET",
    "/api/projects/",
-   32.625,
+   35.554,
    200,
-   "assistant"
+   "leader"
+  ],
+  [
+   "GET",
+   "/api/performances/stats/",
+   35.203,
+   200,
+   "sales"
+  ],
+  [
+   "GET",
+   "/api/public-cases/",
+   34.672,
+   200,
+   "sales2"
   ]
  ]
 }

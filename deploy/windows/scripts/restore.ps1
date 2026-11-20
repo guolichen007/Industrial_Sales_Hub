@@ -56,9 +56,17 @@ try {
     $new = @(Get-ChildItem -LiteralPath $OpsDir -Filter 'restore-*.json' -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Name } | Sort-Object Name | Select-Object -Last 1)
     $rid = if ($new.Count) { (Get-Content -LiteralPath $new[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json).id } else { '' }
     if ($rc -ne 0) {
-        Write-Warn2 "恢复未执行或已自动回退（退出码 $rc）。正式数据保持恢复前状态。"
-        Start-IshService $SvcApp
-        $exitCode = 40
+        # P1 修复：只有日志明确为 ROLLED_BACK（或尚未开始切换）时才启动应用；否则保持停止与维护状态
+        $state = ''
+        if ($new.Count) { $state = (Get-Content -LiteralPath $new[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json).state }
+        if (-not $new.Count -or $state -eq 'ROLLED_BACK') {
+            Write-Warn2 "恢复未执行或已自动回退（退出码 $rc）。正式数据保持恢复前状态。"
+            Start-IshService $SvcApp
+            $exitCode = 40
+        } else {
+            Write-Warn2 "恢复失败且自动回退未完成（日志状态 $state，恢复 ID $rid）。应用保持停止；请勿改动 data 目录，按《备份恢复与升级手册》第 6 节处理：05-恢复备份.bat -Rollback $rid"
+            $exitCode = 42
+        }
     } else {
         $ok = $true
         try {

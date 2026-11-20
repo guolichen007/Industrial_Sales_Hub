@@ -191,9 +191,14 @@ def generate_revision(rev_id: int, user, trial: bool = False) -> QuoteRevision:
         lines_mem = list(QuoteLine.objects.filter(revision_id=rev.pk).order_by("sort", "id"))
         if not lines_mem:
             raise BusinessError("报价至少需要一行产品。", code="empty_quote")
-        signed, so = signoff_state(rev.quote.legal_entity)
+        from apps.organizations.models import LegalEntity
+
+        ent = LegalEntity.objects.select_for_update().get(pk=rev.quote.legal_entity_id)  # 与签收/撤销互斥（P2：避免撤销瞬间生成正式版本）
+        signed, so = signoff_state(ent)
         if not signed and not trial:
             raise BusinessError("该出具主体的报价模板（当前模板版本）尚未经部门负责人签收：只能生成带“试用”水印的试用报价。", code="template_unsigned", http_status=409)
+        if signed and trial:
+            raise BusinessError("该模板已签收，请直接生成正式 PDF（不再提供试用生成）。", code="already_signed")
         for ln in lines_mem:
             recalc_line(ln, rev.price_basis)
         t = compute_totals(lines_mem, rev.host_qty)

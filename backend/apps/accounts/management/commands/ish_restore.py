@@ -76,10 +76,10 @@ class Journal:
         self.say(f"进入阶段 {name}")
 
     def step(self, name, **kw):
-        """记录一个已完成、需要时可逆的切换动作。"""
+        """在执行切换动作**之前**记录意图（崩溃/日志写失败时，撤销按实际存在性判断，不会漏掉已发生的动作）。"""
         self.data["steps"].append({"step": name, "at": datetime.now().isoformat(timespec="seconds"), **kw})
         self.save()
-        self.say(f"完成 {name} {kw}")
+        self.say(f"即将 {name} {kw}")
 
 
 def dir_size(p: Path):
@@ -195,7 +195,7 @@ class Command(BaseCommand):
         if not skip_safety_backup:
             j.phase("SAFETY_BACKUP")
             cmd = _Capture()
-            call_command("ish_backup", dest=str(self.backup_dest), pg_bin=self.pg_bin, label=f"before-restore-{rid}", stdout=cmd)
+            call_command("ish_backup", dest=str(self.backup_dest), pg_bin=self.pg_bin, label=f"before-restore-{rid}", no_prune=True, stdout=cmd)
             st = json.loads(settings.BACKUP_STATUS_FILE.read_text(encoding="utf-8"))
             j.data["safety_backup"] = st.get("path")
             j.save()
@@ -264,22 +264,22 @@ class Command(BaseCommand):
         pgops.close_django()
         if pgops.other_sessions(prod, self.pg_bin) > 0:
             raise CommandError("切换前发现正式库有其他连接，已中止（未修改正式数据）")
-        pgops.rename_db(prod, old_db, self.pg_bin)
-        j.step("db_prod_to_old", src=prod, dst=old_db)
         j.data["old_db"] = old_db
+        j.step("db_prod_to_old", src=prod, dst=old_db)
+        pgops.rename_db(prod, old_db, self.pg_bin)
         fault("restore.switch_db")
-        pgops.rename_db(staging, prod, self.pg_bin)
         j.step("db_staging_to_prod", src=staging, dst=prod)
+        pgops.rename_db(staging, prod, self.pg_bin)
         old_private = live.parent / f"private.old-{rid}"
         j.data["old_private"] = str(old_private)
         if live.exists():
-            os.replace(live, old_private)
             j.step("files_live_to_old", src=str(live), dst=str(old_private))
+            os.replace(live, old_private)
         else:
             j.step("files_live_absent")
         fault("restore.switch_files")
-        os.replace(stage_dir, live)
         j.step("files_staging_to_live", src=str(stage_dir), dst=str(live))
+        os.replace(stage_dir, live)
 
         # ---- 切换后校验（新连接）
         j.phase("POST_VERIFY")
@@ -292,23 +292,37 @@ class Command(BaseCommand):
     # ------------------------------------------------------------------ 回退
     def _rollback(self, j: Journal, why):
         self._say(j, f"开始回退（{why}）")
+        if j.data.get("cleaned_at"):
+            raise CommandError("该恢复已执行 --cleanup（旧数据库与旧文件已删除），不能再回退；请用恢复前的安全备份做一次正式恢复")
+        was_done = j.data.get("state") == "DONE"
         prod = j.data.get("prod_db") or pgops.prod_db()
         steps = j.data.get("steps", [])
         errors = []
+        exists = lambda name: pgops.db_exists(name, self.pg_bin)  # noqa: E731
         for st in reversed(steps):
             if st.get("undone"):
                 continue
             try:
                 name = st["step"]
+                # 每一步按“实际状态”撤销：动作未发生则跳过；已发生则反向执行（可重复执行）
                 if name == "files_staging_to_live":
-                    live = Path(st["dst"])
-                    os.replace(live, Path(st["src"]))
+                    live, src = Path(st["dst"]), Path(st["src"])
+                    if live.exists() and not src.exists():
+                        os.replace(live, src)
                 elif name == "files_live_to_old":
-                    os.replace(Path(st["dst"]), Path(st["src"]))
+                    live, old = Path(st["src"]), Path(st["dst"])
+                    if old.exists() and not live.exists():
+                        os.replace(old, live)
+                    elif old.exists() and live.exists():
+                        raise CommandError(f"{live} 与 {old} 同时存在，需人工确认")
                 elif name == "db_staging_to_prod":
-                    pgops.rename_db(prod, st["src"], self.pg_bin)
+                    if exists(prod) and not exists(st["src"]) and exists(j.data.get("old_db") or "-"):
+                        pgops.rename_db(prod, st["src"], self.pg_bin)
                 elif name == "db_prod_to_old":
-                    pgops.rename_db(st["dst"], st["src"], self.pg_bin)
+                    if exists(st["dst"]) and not exists(st["src"]):
+                        pgops.rename_db(st["dst"], st["src"], self.pg_bin)
+                    elif not exists(st["src"]):
+                        raise CommandError(f"正式库 {st['src']} 与旧库 {st['dst']} 都不存在")
                 st["undone"] = datetime.now().isoformat(timespec="seconds")
                 j.save()
                 self._say(j, f"已撤销 {name}")
@@ -316,13 +330,27 @@ class Command(BaseCommand):
                 errors.append(f"{st['step']}: {e}")
                 self._say(j, f"撤销 {st['step']} 失败：{e}")
                 break  # 逆序撤销：前一步失败则不能继续，保留日志供人工处理
+        if not errors and not pgops.db_exists(prod, self.pg_bin):
+            errors.append(f"回退后正式库 {prod} 不存在")
         if not errors:
             sd = j.data.get("staging_db")
-            if sd and pgops.db_exists(sd, self.pg_bin):
-                pgops.drop_db(sd, self.pg_bin)
             sp = j.data.get("staging_private")
-            if sp and Path(sp).exists():
-                shutil.rmtree(sp, ignore_errors=True)
+            if was_done:
+                # P0 修复：撤销“已完成”的恢复时，staging 位置上是恢复之后录入的业务数据——不删除，改名保留供人工处理
+                if sd and pgops.db_exists(sd, self.pg_bin):
+                    kept = f"{prod}_undone_{j.id}"[:63]
+                    pgops.rename_db(sd, kept, self.pg_bin)
+                    j.data["undone_db"] = kept
+                if sp and Path(sp).exists():
+                    kept_dir = Path(sp).parent / f"private.undone-{j.id}"
+                    os.replace(sp, kept_dir)
+                    j.data["undone_private"] = str(kept_dir)
+                self._say(j, f"恢复之后录入的数据已保留：数据库 {j.data.get('undone_db')}，文件 {j.data.get('undone_private')}")
+            else:
+                if sd and pgops.db_exists(sd, self.pg_bin):
+                    pgops.drop_db(sd, self.pg_bin)
+                if sp and Path(sp).exists():
+                    shutil.rmtree(sp, ignore_errors=True)
         j.data["state"] = "ROLLBACK_FAILED" if errors else "ROLLED_BACK"
         j.data["rollback_errors"] = errors
         j.data["rolled_back_at"] = datetime.now().isoformat(timespec="seconds")

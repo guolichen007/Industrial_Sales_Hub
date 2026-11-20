@@ -1,0 +1,27 @@
+                logger.debug("connection failed: %s: %s", descr, str(tex))
+                logger.debug("connection failed: %s: %s", descr, str(ex))
+E               psycopg.OperationalError: connection failed: connection to server at "127.0.0.1", port 5432 failed: FATAL:  database "test_ish" does not exist
+                logger.debug("connection failed: %s: %s", descr, str(tex))
+                logger.debug("connection failed: %s: %s", descr, str(ex))
+E               django.db.utils.OperationalError: connection failed: connection to server at "127.0.0.1", port 5432 failed: FATAL:  database "test_ish" does not exist
+                logger.debug("connection failed: %s: %s", descr, str(tex))
+                logger.debug("connection failed: %s: %s", descr, str(ex))
+E               psycopg.OperationalError: connection failed: connection to server at "127.0.0.1", port 5432 failed: FATAL:  database "test_ish" does not exist
+                logger.debug("connection failed: %s: %s", descr, str(tex))
+                logger.debug("connection failed: %s: %s", descr, str(ex))
+E               django.db.utils.OperationalError: connection failed: connection to server at "127.0.0.1", port 5432 failed: FATAL:  database "test_ish" does not exist
+                logger.debug("connection failed: %s: %s", descr, str(tex))
+                logger.debug("connection failed: %s: %s", descr, str(ex))
+E               psycopg.OperationalError: connection failed: connection to server at "127.0.0.1", port 5432 failed: FATAL:  database "test_ish" does not exist
+                logger.debug("connection failed: %s: %s", descr, str(tex))
+                logger.debug("connection failed: %s: %s", descr, str(ex))
+E               django.db.utils.OperationalError: connection failed: connection to server at "127.0.0.1", port 5432 failed: FATAL:  database "test_ish" does not exist
+FAILED tests/test_rc2_review_fixes.py::test_sales_editor_cannot_see_internal_project_attachments
+FAILED tests/test_rc2_review_fixes.py::test_classification_patch_only_by_leader_or_assistant
+FAILED tests/test_rc2_review_fixes.py::test_finance_cannot_bind_quote_to_order
+FAILED tests/test_rc2_review_fixes.py::test_order_confirm_does_not_accept_quote_whose_latest_is_trial
+FAILED tests/test_rc2_review_fixes.py::test_trial_request_on_signed_template_is_rejected
+FAILED tests/test_rc2_review_fixes.py::test_safety_backup_never_prunes_old_backups
+FAILED tests/test_rc2_review_fixes.py::test_rollback_of_done_restore_keeps_post_restore_data
+FAILED tests/test_rc2_review_fixes.py::test_rollback_after_cleanup_is_refused
+8 failed, 1 warning, 3 errors in 39.05s

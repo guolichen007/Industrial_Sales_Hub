@@ -122,16 +122,20 @@ function Invoke-UpgradeRollback([string]$why) {
         if (Test-Prop $st 'undone') { continue }
         try {
             switch ($st.step) {
-                'file_new_in' { if (-not $dbStopped) { Stop-IshService $SvcDb; $dbStopped = $true }; if (Test-Path -LiteralPath $st.dst) { Move-Item -LiteralPath $st.dst -Destination $st.src -Force } }
-                'file_old_out' { if (-not $dbStopped) { Stop-IshService $SvcDb; $dbStopped = $true }; if (Test-Path -LiteralPath $st.dst) { Move-Item -LiteralPath $st.dst -Destination $st.src -Force } }
+                # 按实际存在性撤销（意图先于动作记录；动作未发生则跳过；可重复执行）
+                'file_new_in' { if (-not $dbStopped) { Stop-IshService $SvcDb; $dbStopped = $true }; if ((Test-Path -LiteralPath $st.dst) -and -not (Test-Path -LiteralPath $st.src)) { Move-Item -LiteralPath $st.dst -Destination $st.src } }
+                'file_old_out' { if (-not $dbStopped) { Stop-IshService $SvcDb; $dbStopped = $true }; if ((Test-Path -LiteralPath $st.dst) -and -not (Test-Path -LiteralPath $st.src)) { Move-Item -LiteralPath $st.dst -Destination $st.src } }
                 'db_migrate_started' {
                     # 用升级前整库快照替换（改名切换）；迁移过的库保留为 _failed_<ID> 供分析
                     Start-IshService $SvcDb; $dbStopped = $false
                     if (-not (Wait-Db $port 60)) { throw '数据库未就绪' }
                     $c = Get-DbConn
                     $failed = "$($c.Db)_failed_$($j.id)"
-                    Invoke-Psql "ALTER DATABASE `"$($c.Db)`" RENAME TO `"$failed`"" | Out-Null
-                    Invoke-Psql "ALTER DATABASE `"$($st.snapshot)`" RENAME TO `"$($c.Db)`"" | Out-Null
+                    $has = { param($n) (Invoke-Psql "SELECT 1 FROM pg_database WHERE datname='$n'") -eq '1' }
+                    # 两次改名分别按存在性执行：中途失败后再次 -Rollback 可以继续（P1 修复）
+                    if ((& $has $c.Db) -and -not (& $has $failed) -and (& $has $st.snapshot)) { Invoke-Psql "ALTER DATABASE `"$($c.Db)`" RENAME TO `"$failed`"" | Out-Null }
+                    if ((& $has $st.snapshot) -and -not (& $has $c.Db)) { Invoke-Psql "ALTER DATABASE `"$($st.snapshot)`" RENAME TO `"$($c.Db)`"" | Out-Null }
+                    if (-not (& $has $c.Db)) { throw "正式库 $($c.Db) 不存在（快照 $($st.snapshot) 也不存在），需人工处理" }
                     $j['failed_db'] = $failed
                 }
                 'db_snapshot' {
@@ -269,7 +273,8 @@ try {
         $cfg = Read-AppEnv
         $bdest = if ($cfg['ISH_BACKUP_DIR']) { $cfg['ISH_BACKUP_DIR'] } else { $Backups }
         $label = "pre-upgrade-$id"
-        $rc = Invoke-Manage @('ish_backup', '--dest', $bdest, '--pg-bin', $PgBin, '--label', $label) -AllowFail
+        # 旧程序可能不认识 --no-prune（RC1）：用很大的保留天数代替，避免清理掉旧备份
+        $rc = Invoke-Manage @('ish_backup', '--dest', $bdest, '--pg-bin', $PgBin, '--label', $label, '--keep-days', '36500') -AllowFail
         # RC1 程序的备份命令会自行写入并删除维护标记：重新确认本次升级的维护标记仍在
         if (-not (Get-MaintenanceOwner)) { $null = Set-Maintenance "upgrade $id" }
         if ($rc -ne 0) { throw "旧程序 pre-upgrade 备份失败（退出码 $rc）" }
@@ -287,8 +292,8 @@ try {
         Set-OpsPhase 'SNAPSHOT'
         $c = Get-DbConn
         $snapDb = "$($c.Db)_preupg_$id"
+        Add-OpsStep @{ step = 'db_snapshot'; snapshot = $snapDb }   # 先记意图，再创建（崩溃后回滚按存在性处理）
         Invoke-Psql "CREATE DATABASE `"$snapDb`" TEMPLATE `"$($c.Db)`"" | Out-Null
-        Add-OpsStep @{ step = 'db_snapshot'; snapshot = $snapDb }
         Write-Ok "数据库快照：$snapDb"
 
         Set-OpsPhase 'STAGE'
@@ -315,16 +320,16 @@ try {
         foreach ($it in $allItems) {
             $cur = Join-Path $Root $it
             if (Test-Path -LiteralPath $cur) {
-                Move-Item -LiteralPath $cur -Destination (Join-Path $keep $it)
                 Add-OpsStep @{ step = 'file_old_out'; src = $cur; dst = (Join-Path $keep $it) }
+                Move-Item -LiteralPath $cur -Destination (Join-Path $keep $it)
             }
         }
         Test-FaultInjection 'upgrade.switch_half'
         foreach ($it in $items) {
             $s = Join-Path $stage $it
             if (Test-Path -LiteralPath $s) {
-                Move-Item -LiteralPath $s -Destination (Join-Path $Root $it)
                 Add-OpsStep @{ step = 'file_new_in'; src = $s; dst = (Join-Path $Root $it) }
+                Move-Item -LiteralPath $s -Destination (Join-Path $Root $it)
             }
         }
         $bad = @(Test-PackageChecksums $Root)
