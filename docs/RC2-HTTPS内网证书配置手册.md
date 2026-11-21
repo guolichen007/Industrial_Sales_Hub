@@ -53,6 +53,9 @@ DJANGO_CSRF_TRUSTED_ORIGINS=https://sales.corp.example
 - 站点绑定 https:443 + 4.1/4.2 的证书；新增入站规则：`(.*)` → `http://127.0.0.1:8000/{R:1}`，并设置服务器变量 `HTTP_X_FORWARDED_PROTO=https`。
 - 上传大小：`maxAllowedContentLength=31457280`（与应用 30 MB 上限一致）。
 - 防火墙：`New-NetFirewallRule -DisplayName 'Industrial Sales Hub HTTPS (443)' -Direction Inbound -Protocol TCP -LocalPort 443 -Action Allow -Profile Private,Domain -RemoteAddress LocalSubnet`。
+  RC3 起安装/卸载/重复安装只删除名称以 `Industrial Sales Hub App (TCP ` 开头（及 RC1/RC2 旧名 `Industrial Sales Hub (TCP <端口>)`）的应用端口规则，
+  **不会删除**此 HTTPS 规则（RC2 曾用通配名删除，见 `docs/evidence/RC3/G5-T17-before-rc2.txt`）。`06-检查系统` 分别列出“应用端口规则”和“手工防火墙规则”。
+- HTTPS 模式安装完成/`02-启动系统` 时**不再自动打开** `http://…:8000` 登录页（该地址在 HTTPS 模式下本就不对外开放），请使用 `https://<内网域名>/`。
 
 （Caddy/nginx for Windows 同理：TLS 终止于代理，`proxy_set_header X-Forwarded-Proto https`，上游 `127.0.0.1:8000`。）
 
@@ -66,7 +69,8 @@ DJANGO_CSRF_TRUSTED_ORIGINS=https://sales.corp.example
 | 4 | 响应头 | `Strict-Transport-Security: max-age=86400`（无 includeSubDomains/preload） |
 | 5 | 从另一来源页面 POST 登录（可用 `curl -H "Origin: https://evil.example"`） | 403（CSRF 来源校验；RC2 登录也强制 CSRF） |
 | 6 | 客户端伪造 `X-Forwarded-For` | 应用日志记录的是代理转发的真实客户端地址（只信任 127.0.0.1 代理） |
-| 7 | `06-检查系统.bat` | 不再出现“HTTP 隔离内网试用”警告 |
+| 7 | `06-检查系统.bat` | 不再出现“HTTP 隔离内网试用”警告；列出手工 HTTPS 规则；无应用端口规则 |
+| 8 | 再次运行 `01-安装部署.bat -Https`（RC3-T17） | 结束后 `Get-NetFirewallRule -DisplayName 'Industrial Sales Hub HTTPS (443)'` 仍存在且 Enabled |
 
 自动化证据（开发环境）：`backend/tests/test_rc2_tls_settings.py`（Secure Cookie、HSTS 参数、仅在声明代理时信任代理头、CSRF 只接受可信 https 来源、LAN 拒绝 DEBUG/`*`/短密钥）。
 

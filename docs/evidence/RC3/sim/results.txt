@@ -1,5 +1,5 @@
 # RC2(baa9ef6) → RC3 升级器/恢复 Linux 模拟（真实 pwsh 7 + PostgreSQL 16 + Waitress；服务/ACL/防火墙为模拟，不代表 Windows 实机）
-# 合并自 4 次运行：ok（座位表修正后重跑）/ fault / migrate+crash+guard / restore；合计 83 PASS / 0 FAIL
+# 合并自 4 次运行：ok（默认阶段表种子规则修正后重跑）/ fault / migrate+crash+guard / restore；合计 83 PASS / 0 FAIL
 ## 场景 ok：RC2(baa9ef6) → RC3 升级成功
 PASS 升级前应用版本 rc2
 PASS upgrade.ps1 退出码 0

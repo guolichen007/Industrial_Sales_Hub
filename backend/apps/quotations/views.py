@@ -283,7 +283,7 @@ class RevisionViewSet(viewsets.GenericViewSet):
         ln = s.save(revision=rev, product_id=pid)
         services.recalc_revision(rev)
         services.bump(rev)
-        audit(request, "add_line", "quote_revision", rev.id, f"新增报价行 {ln.model} {ln.name}（{rev.code}）", {"line_id": ln.id, "quote_id": rev.quote_id, "unit_price": str(ln.unit_price)})
+        audit(request, "add_line", "quote_revision", rev.id, f"新增报价行 {ln.model} {ln.name}（{rev.code}）", {"line_id": ln.id, "quote_id": rev.quote_id})
         return Response(RevisionSerializer(_fresh(rev.pk)).data, status=201)
 
     @action(detail=True, methods=["patch", "delete"], url_path=r"lines/(?P<line_id>\d+)")
@@ -303,7 +303,7 @@ class RevisionViewSet(viewsets.GenericViewSet):
             s.save()
             changed = sorted(k for k in s.validated_data if before.get(k, None) != str(getattr(ln, k)))
             audit(request, "edit_line", "quote_revision", rev.id, f"修改报价行 {ln.model}（{rev.code}）：{'、'.join(changed) or '无变化'}",
-                  {"line_id": ln.id, "quote_id": rev.quote_id, "fields": changed, "unit_price": str(ln.unit_price)})
+                  {"line_id": ln.id, "quote_id": rev.quote_id, "fields": changed})
         services.recalc_revision(rev)
         services.bump(rev)
         return Response(RevisionSerializer(_fresh(rev.pk)).data)

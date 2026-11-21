@@ -1,4 +1,4 @@
-# API 一览（RC2，2.1.0-rc2）
+# API 一览（RC3，2.1.0-rc3）
 
 所有接口前缀 `/api/`，同源 Session + CSRF（写操作需带 `X-CSRFToken` 头）。错误统一为：
 
@@ -34,7 +34,7 @@
 | GET | `accounts/{id}/projects/` | LE AS SA FI | — | 受可见范围限制；`?q=&role=&presale_phase=&execution_phase=` |
 | GET/POST/PATCH/DELETE | `contacts/` | LE AS SA FI | LE AS SA | |
 | GET/POST/PATCH | `product-categories/` `parameter-definitions/` `products/` | 业务角色（SA/FI 不含价格） | LE AS | 无删除，停用代替 |
-| GET/POST/PATCH/DELETE | `projects/` | LE AS SA FI（SA 可见≠可编辑） | LE AS SA（SA 仅本人/参与；成员仅 LE AS 指派） | 删除仅 LE |
+| GET/POST/PATCH/DELETE | `projects/` | LE AS SA FI（SA 可见≠可编辑） | LE AS FI SA（SA 仅本人/参与且未中标；成员仅 LE AS 指派） | 删除仅 LE；RC3 FI 写入随 `ISH_FINANCE_SCOPE=BUSINESS` |
 | GET/POST/DELETE | `projects/{id}/parties/…` | 同上 | 同上 | 参与方，同项目同组织同身份去重 |
 | GET/POST | `projects/{id}/updates/` | 同上 | 售前：LE AS SA；执行：LE AS FI | |
 | GET/POST/PATCH | `projects/{id}/milestones/…` | 同上 | LE AS FI | 延期须填原因 |
@@ -56,10 +56,12 @@
 | GET | `quote-lines/history/` | LE AS | — | RC2：历史价格组合查询（仅冻结且非试用） |
 | GET/POST | `order-confirmations/` | LE AS FI | LE AS FI | FI 无金额字段；试用报价不能作为依据 |
 | POST | `order-confirmations/{id}/confirm/` `…/revoke/` `…/amount/` | — | 见 D3 / LE / LE AS | |
-| GET/POST/PATCH | `performances/` | LE AS FI SA（SA 仅本人；SA/FI 无金额） | LE AS | 筛选：q/year/year_from/year_to/status/source/industry/machine_type/region/sales_owner/project |
+| GET/POST/PATCH | `performances/` | LE AS FI SA（SA 仅本人；SA/FI 无金额） | LE AS；FI（RC3，金额/内部备注/公开授权 403） | 筛选：q/year/year_from/year_to/status/source/industry/machine_type/region/sales_owner/project |
 | POST | `performances/{id}/approve/` `…/revoke/` | — | LE | |
 | GET | `performances/stats/` `performances/facets/` | 同列表 | — | |
 | GET | `performances/export/` | LE AS FI SA | — | RC2：内部 Excel，按范围与字段白名单裁剪，写审计 |
+| GET | `performances/export-pdf/` | LE AS FI SA | — | RC3：内部安全版 PDF（同列表范围与筛选；拒绝 `ids`；≤1000 条；无金额/合同号/内部备注；写审计含 SHA256） |
+| GET | `projects/{id}/activity/` | LE AS SA FI | — | RC3：项目操作记录；SA 仅动作/操作人/时间，报价动作仅有报价权限者可见 |
 | GET | `public-cases/` | LE AS SA | — | 白名单字段；`?industry=&machine_type=&region=&product=&facets=1` |
 | POST | `case-preview/` | LE AS SA | — | 白名单字段（含已授权照片） |
 | GET/POST | `case-releases/` | LE AS SA | LE AS SA | 仅已确认且允许公开的业绩 |

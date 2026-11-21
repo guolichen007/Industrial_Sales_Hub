@@ -54,8 +54,16 @@ if ($mo) {
 }
 $st = Join-Path $Data 'install-state.json'
 if (Test-Path -LiteralPath $st) { $is = Get-Content -LiteralPath $st -Raw -Encoding UTF8 | ConvertFrom-Json; if ($is.phase -ne 'done') { Write-Warn2 "安装未完成（阶段 $($is.phase)）：请重新运行 01-安装部署.bat"; $ok = $false } }
-$fw = Get-NetFirewallRule -DisplayName 'Industrial Sales Hub*' -ErrorAction SilentlyContinue
-if ($fw) { Write-Ok ("防火墙规则：{0}（{1}）" -f $fw.DisplayName, ($fw.Profile -join ',')) } else { Write-Warn2 '未找到防火墙规则，局域网其他电脑可能无法访问' }
+# RC3：应用端口规则（安装器维护）与 HTTPS 代理规则（管理员手工建立，安装/卸载不删除）分别列出
+$appFw = @(Get-AppFirewallRules)
+$allFw = @(Get-NetFirewallRule -DisplayName 'Industrial Sales Hub*' -ErrorAction SilentlyContinue)
+$otherFw = @($allFw | Where-Object { $n = $_.DisplayName; -not ($appFw | Where-Object { $_.DisplayName -eq $n }) })
+foreach ($r in $appFw) { Write-Ok ("应用端口防火墙规则：{0}（{1}）" -f $r.DisplayName, ($r.Profile -join ',')) }
+foreach ($r in $otherFw) { Write-Ok ("手工防火墙规则（安装器不会删除）：{0}（{1}）" -f $r.DisplayName, ($r.Profile -join ',')) }
+if ($cfg['ISH_HTTPS'] -eq '1') {
+    if ($appFw.Count -gt 0) { Write-Warn2 'HTTPS 模式下仍存在应用端口规则：应用端口不应对局域网开放，请重新运行 01-安装部署.bat -Https' }
+    if ($otherFw.Count -eq 0) { Write-Warn2 '未找到 HTTPS 代理防火墙规则（见 RC2-HTTPS内网证书配置手册 4.3）' }
+} elseif ($appFw.Count -eq 0) { Write-Warn2 '未找到应用端口防火墙规则，局域网其他电脑可能无法访问' }
 $scheme = if ($cfg['ISH_HTTPS'] -eq '1') { 'https' } else { 'http' }
 Write-Host '局域网地址：'; Get-LanAddresses | ForEach-Object { Write-Host "  ${scheme}://${_}:$port/" }
 $errs = Get-ChildItem -LiteralPath $Logs -Filter 'app.log' -ErrorAction SilentlyContinue | ForEach-Object { Select-String -LiteralPath $_.FullName -Pattern ' ERROR ' | Select-Object -Last 5 }
