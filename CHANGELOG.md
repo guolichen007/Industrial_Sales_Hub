@@ -30,7 +30,7 @@
 - 多网卡按默认网关实体网卡优先，`-PreferredIp`/`ISH_PREFERRED_IP`（F11/T18）；HTTPS 模式不打开 HTTP 登录页（F12）；`06-检查系统` 分别列出应用规则与手工规则。
 
 ### 测试
-- 后端 292 → 332（PostgreSQL 16）；浏览器 72 → 94；升级/恢复模拟改为 RC2(baa9ef6) → RC3，83 项；PowerShell 单元测试 unit-rc3（T17/T18）、unit-rc3-vc（T19）。
+- 后端 292 → 333（PostgreSQL 16）；浏览器 72 → 94；升级/恢复模拟改为 RC2(baa9ef6) → RC3，83 项；PowerShell 单元测试 unit-rc3（T17/T18）、unit-rc3-vc（T19）。
 
 ## [2.1.0-rc2] - 2026-11-20（修复与现场验收候选，非正式版）
 

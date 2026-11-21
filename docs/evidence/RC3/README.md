@@ -10,11 +10,11 @@
 |---|---|---|---|
 | G0 | 两板块、询价 vs 报价、财务口径、角色与字段矩阵（CI 请求矩阵） | **PASS（代码）**；D-1/D-2 业务口径待甲方确认 | `docs/RC3-业务角色与字段矩阵.md`；`test_rc3_g0_g2_business.py::test_business_role_request_matrix`（15 行 × 5 角色）、`test_matrix_doc_in_sync` |
 | G1 | 中标转交锁定销售写入（P0） | **PASS** | `test_rc3_g1_handoff.py`（12）；反例 `G1-before-baa9ef6.txt`（RC2 上 4 项失败：200/201/(201,201)/can_edit=True） |
-| G2 | 交付/资金两条状态线、公开/内部说明、阶段配置 | **PASS** | `test_rc3_g0_g2_business.py`（T06–T10、T24、迁移） |
+| G2 | 交付/资金两条状态线、公开/内部说明、阶段配置 | **PASS** | `test_rc3_g0_g2_business.py`（T06–T10、T24、迁移、资金线内部说明不经进展流外泄给商务——封板前复审发现并修复于 8a198b3） |
 | G3 | 内部安全版业绩 PDF | **PASS** | `test_rc3_g3_internal_pdf.py`（5）；反例 `G3-before.txt`（RC2 无此接口，5 项失败）；样张 `内部业绩PDF-虚构样张.pdf`（虚构数据） |
 | G4 | 字段级审计、发生/录入时间、操作记录 | **PASS** | `test_rc3_g4_audit.py`（5）；反例 `G4-before-baa9ef6.txt`（RC2 上 4 项失败） |
 | G5 | Windows 安装加固 T17–T21 | **代码 PASS / 实机 未执行** | `deploy/windows/tests/unit-rc3.ps1`（T17/T18）、`unit-rc3-vc.ps1`（T19）；反例 `G5-T17-before-rc2.txt`；`sim/results.txt`（RC2→RC3，83/0）；实机见 `docs/RC3-Windows实机验收手册.md` |
-| G6 | 无回退、同 SHA CI、签收、交付 | **本地 PASS / 远端 CI 待推送 / 签收未完成** | 后端 332/332（基线 292 全部保留）；E2E 94/94（基线 72 全部保留）；`e2e/e2e_v21_lan_results.json` |
+| G6 | 无回退、同 SHA CI、签收、交付 | **本地 PASS / 远端 CI 待推送 / 签收未完成** | 后端 333/333（基线 292 全部保留）；E2E 94/94（基线 72 全部保留）；`e2e/e2e_v21_lan_results.json` |
 
 本地测试环境：Linux 沙箱，Python 3.12，PostgreSQL 16（pgserver），Chromium（Playwright），PowerShell 7.4 + PSScriptAnalyzer 1.22.0（0 告警）。
 
@@ -33,6 +33,7 @@
 
 1. **数据模型上没有金额字段**：资金状态线 `TrackEvent(track=PAYMENT)` 只有阶段代码（未确认/预付款已到账/尾款待收/已结清/有争议）、发生日期、操作人、系统时间、`public_note`、`private_note`。不存在可以“漏”的金额列。
 2. **自由文本分为两栏**：`public_note`（销售可见，页面提示“勿填金额”）与 `private_note`（内部）。`track_summary()` 与 `TrackEventSerializer` 对没有对应写权限的角色**不输出** `private_note` 键（不是置空，而是字段不存在）。
+   状态事件同步到项目进展流时只带公开说明，内部说明只保存在状态事件本身（封板前复审发现资金线内部说明曾可经进展流被商务读到，已修复并加回归测试）。
 3. **原有自由文本也收口**：RC2 中销售能读到的执行进展 `content`、执行节点 `note/delay_reason` 可能含“预付款 30 万已到账”（审计 F15/T24）。RC3 对销售只返回 `public_content`/`public_note`（销售本人写的售前跟进除外）。
 4. **操作记录只给动作**：销售的活动时间线只有动作名、操作人、时间，不含摘要和字段名。
 5. **测试**：`test_T24_internal_amount_text_never_reaches_sales` 在 6 个销售可访问接口（项目详情、进展、节点、状态线、项目列表、工作台）中搜索“30 万/12 万/88 万/300000”均不存在；E2E 在真实浏览器中以销售身份检查页面与接口均无“36 万/8 万/内部：”。
@@ -92,8 +93,8 @@
 ## 5. 可重复命令
 
 ```bash
-cd backend && DATABASE_URL=postgres://… python -m pytest -q                       # 332 passed
-python -m pytest -q tests/test_rc3_*.py                                           # RC3 新增 40 项
+cd backend && DATABASE_URL=postgres://… python -m pytest -q                       # 333 passed
+python -m pytest -q tests/test_rc3_*.py                                           # RC3 新增 41 项
 # E2E：见 e2e/e2e_v21_lan.py 头部（需 LAN 模式 Waitress + 已构建前端）
 pwsh -File deploy/windows/tests/unit-rc3.ps1; pwsh -File deploy/windows/tests/unit-rc3-vc.ps1
 ISH_SIM_TOOLS=<含 env/venv env/pwsh 的目录> bash deploy/windows/tests/sim/run_sim.sh <输出目录>   # 需 PostgreSQL
