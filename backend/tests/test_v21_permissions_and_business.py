@@ -340,7 +340,10 @@ def test_revoke_last_order_pauses_and_other_orders_keep_execution(client_for, ba
     assert p.presale_phase == "成交" and p.execution_phase == "执行中"
     lc.post(f"/api/order-confirmations/{o2['id']}/revoke/", {"reason": "客户取消"}, format="json")
     p = Project.objects.get(pk=pid)
-    assert p.presale_phase == "结果待定" and p.execution_phase == "暂停" and p.milestones.count() == 8  # 节点保留
+    # RC3-G1 行为调整：中标是独立于合同的业务事件，撤销订单不自动“撤销中标”（否则销售会重新获得写权限）。
+    # 售前阶段保持“成交”并保持销售锁定；确属失标时由负责人执行“撤销中标”（见 test_rc3_g1_handoff.py）。
+    assert p.presale_phase == "成交" and p.sales_locked_at is not None
+    assert p.execution_phase == "暂停" and p.milestones.count() == 8  # 节点保留
     assert Performance.objects.filter(project=p, status="REVOKED").count() == 2
 
 
@@ -556,7 +559,8 @@ def test_sales_cannot_move_won_project_back(client_for, base):
     confirm(client_for, base, ref="WB-1")
     pid = base["p_sales"].id
     c = client_for("sales")
-    assert c.patch(f"/api/projects/{pid}/", {"presale_phase": "投标中"}, format="json").status_code == 400
+    # RC3-G1：成交后整个项目对销售只读，PATCH 由“字段校验 400”变为“权限 403”（更严格）
+    assert c.patch(f"/api/projects/{pid}/", {"presale_phase": "投标中"}, format="json").status_code == 403
     assert c.post(f"/api/projects/{pid}/updates/", {"stream": "PRESALE", "title": "x", "phase": "投标中"}, format="json").status_code == 403
     assert Project.objects.get(pk=pid).presale_phase == "成交"
 

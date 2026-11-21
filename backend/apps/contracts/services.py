@@ -97,7 +97,13 @@ def confirm_order(order_id: int, user) -> OrderConfirmation:
         except IntegrityError as e:
             raise BusinessError("重复确认：该订单号已存在或已生成业绩。", code="duplicate_order") from e
         project.presale_phase = "成交"
-        project.save(update_fields=["presale_phase", "updated_at"])
+        fields = ["presale_phase", "updated_at"]
+        if not project.sales_locked_at:  # RC3-G1：合同/订单确认意味着已中标；未经单独中标确认的项目在此补记并锁定销售写入
+            now = timezone.now()
+            project.won_at, project.won_by, project.sales_locked_at = now, user, now
+            project.won_note = "合同/订单确认时自动记录中标"
+            fields += ["won_at", "won_by", "sales_locked_at", "won_note"]
+        project.save(update_fields=fields)
         if order.quote_id:
             from apps.quotations.models import Quote
 
@@ -138,8 +144,10 @@ def revoke_order(order_id: int, user, reason: str) -> OrderConfirmation:
         if was_confirmed:
             others = project.orders.filter(status="CONFIRMED").exists()
             if not others:
-                # 最后一笔有效订单被撤销：保留真实执行节点和历史，项目暂停执行、售前回到结果待定
-                project.presale_phase = "结果待定"
+                # 最后一笔有效订单被撤销：保留真实执行节点和历史，项目暂停执行。
+                # RC3-G1：中标转交状态不随之自动解除（避免销售因订单撤销而重新获得写权限）；如确属失标，由负责人“撤销中标”
+                if not project.sales_locked_at:
+                    project.presale_phase = "结果待定"
                 if project.milestones.exists():
                     project.execution_phase = "暂停"
                 project.save(update_fields=["presale_phase", "execution_phase", "updated_at"])

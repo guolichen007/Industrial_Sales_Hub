@@ -155,6 +155,30 @@ export default function ProjectDetail() {
       fail(e);
     }
   };
+  const handoff = async () => {
+    const note = prompt("中标确认并转交商务：之后销售对本项目只能查看进度。中标说明（可空）：", "");
+    if (note === null) return;
+    const wonAt = prompt("中标日期（YYYY-MM-DD，留空为今天）：", "") || undefined;
+    try {
+      await post(`/projects/${pid}/handoff/`, { note, won_at: wonAt });
+      notify("已确认中标并转交商务；销售写入已锁定");
+      refresh();
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const revertHandoff = async () => {
+    const reason = prompt("撤销中标原因（必填，例如误操作、最终失标）：");
+    if (!reason) return;
+    const phase = prompt("撤销后的售前阶段（线索发现/初步沟通/技术交流/报价中/投标中/结果待定/失标）：", "结果待定") || "结果待定";
+    try {
+      await post(`/projects/${pid}/handoff/revert/`, { reason, presale_phase: phase });
+      notify("已撤销中标");
+      refresh();
+    } catch (e) {
+      fail(e);
+    }
+  };
   const initMs = async () => {
     try {
       await post(`/projects/${pid}/milestones/`);
@@ -177,7 +201,8 @@ export default function ProjectDetail() {
           <span className="chip">售前：{p.presale_phase}</span>
           <span className="chip blue">执行：{p.execution_phase}</span>
           <span className="chip gray">销售：{p.sales_owner_name || "未指定"}</span>
-          {!editable && <span className="chip gray">只读（非本人负责/参与）</span>}
+          {p.sales_locked_at && <span className="chip amber" title={`中标确认：${p.won_by_name || ""} ${dt(p.won_at, true)}`}>已中标 · 已转交商务（{dt(p.won_at)}）</span>}
+          {!editable && <span className="chip gray">{p.sales_locked_at ? "销售只读：只能查看进度" : "只读（非本人负责/参与）"}</span>}
           {p.milestones.length > 0 && <span className="chip gray">执行节点 {done}/{p.milestones.length}</span>}
         </div>
       </div>
@@ -188,7 +213,10 @@ export default function ProjectDetail() {
         {canExec && <button className="btn soft" onClick={() => setModal("EXECUTION")}>+ 执行进展</button>}
         {can("quote.access") && <button className="btn primary" onClick={() => nav(`/quotes?new=1&project=${pid}`)}>+ 为此项目报价</button>}
         {can("order.confirm") && <button className="btn dark" onClick={() => setModal("order")}>登记合同/订单</button>}
+        {can("project.handoff") && !p.sales_locked_at && <button className="btn warn" onClick={handoff}>中标确认 · 转交商务</button>}
+        {can("project.handoff_revert") && p.sales_locked_at && <button className="btn mini" onClick={revertHandoff}>撤销中标</button>}
       </div>
+      <div className="micro" style={{ marginBottom: 10 }}>创建：{p.created_by_name || "—"} {dt(p.created_at, true)} ｜ 最后修改：{p.updated_by_name || "—"} {dt(p.updated_at, true)}</div>
       <div className="tabbar">{tabs.map(([k, l]) => <button key={k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>{l}</button>)}</div>
 
       {tab === "overview" && (

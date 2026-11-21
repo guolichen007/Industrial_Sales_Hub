@@ -59,7 +59,12 @@ def _owner_access(user, owner_type, owner_id, write=False):
         return False
     if owner_type == "project":
         p = Project.objects.get(pk=owner_id)
-        return can(user, "project.edit") and is_project_editable(user, p)
+        if write:
+            return can(user, "project.edit") and is_project_editable(user, p)  # RC3-G1：中标转交后销售不能上传/删除
+        # 读取：中标后销售仍可查看自己项目中的售前资料与已授权交付附件（类别过滤见 _klass_ok_for）
+        from apps.projects.scope import is_project_member_for_read
+
+        return (can(user, "project.edit") and is_project_editable(user, p)) or is_project_member_for_read(user, p)
     if owner_type == "order":
         from apps.contracts.models import OrderConfirmation
 

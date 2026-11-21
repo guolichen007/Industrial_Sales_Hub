@@ -12,7 +12,7 @@ from apps.common.params import int_param, str_param
 from apps.common.roles import SALES, HasCap, can, role_of
 
 from .models import EXECUTION_PHASES, MILESTONE_STAGES, PRESALE_PHASES, ExecutionMilestone, Project, ProjectParty, ProjectUpdate
-from .scope import editable_projects, is_project_editable, visible_projects
+from .scope import assert_sales_writable, editable_projects, is_project_editable, visible_projects
 
 # 销售不能直接设置的售前阶段：“成交”只能由合同/订单确认产生
 SALES_FORBIDDEN_PHASES = {"成交"}
@@ -80,7 +80,7 @@ class ProjectListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Project
-        fields = ["id", "code", "name", "industry", "machine_type", "region", "location", "investor", "presale_phase", "execution_phase", "sales_owner", "sales_owner_name", "party_names", "milestone_done", "milestone_total", "can_edit", "updated_at"]
+        fields = ["id", "code", "name", "industry", "machine_type", "region", "location", "investor", "presale_phase", "execution_phase", "sales_owner", "sales_owner_name", "party_names", "milestone_done", "milestone_total", "can_edit", "won_at", "sales_locked_at", "updated_at"]
 
     def get_party_names(self, obj):
         return [f"{p.account.name}（{p.party_role}）" for p in obj.parties.all()]
@@ -97,11 +97,15 @@ class ProjectSerializer(serializers.ModelSerializer):
     milestones = MilestoneSerializer(many=True, read_only=True)
     member_names = serializers.SerializerMethodField()
     can_edit = serializers.SerializerMethodField()
+    won_by_name = serializers.CharField(source="won_by.name", read_only=True, default="")
+    created_by_name = serializers.CharField(source="created_by.name", read_only=True, default="")
+    updated_by_name = serializers.CharField(source="updated_by.name", read_only=True, default="")
 
     class Meta:
         model = Project
-        fields = ["id", "code", "name", "industry", "machine_type", "region", "location", "investor", "description", "presale_phase", "execution_phase", "sales_owner", "sales_owner_name", "members", "member_names", "expected_amount_note", "parties", "milestones", "can_edit", "created_at", "updated_at"]
-        read_only_fields = ["code", "execution_phase"]
+        fields = ["id", "code", "name", "industry", "machine_type", "region", "location", "investor", "description", "presale_phase", "execution_phase", "sales_owner", "sales_owner_name", "members", "member_names", "expected_amount_note", "parties", "milestones", "can_edit",
+                  "won_at", "won_by_name", "won_note", "sales_locked_at", "created_by_name", "created_at", "updated_by_name", "updated_at"]
+        read_only_fields = ["code", "execution_phase", "won_at", "won_note", "sales_locked_at"]
 
     def get_member_names(self, obj):
         return [u.name for u in obj.members.all()]
@@ -132,7 +136,7 @@ class ProjectSerializer(serializers.ModelSerializer):
 
 class ProjectViewSet(viewsets.ModelViewSet):
     permission_classes = [HasCap.of("project.edit", read_cap="project.read")]
-    SUB_ACTIONS = {"updates", "milestones", "update_milestone", "related", "parties", "remove_party", "set_execution_phase"}
+    SUB_ACTIONS = {"updates", "milestones", "update_milestone", "related", "parties", "remove_party", "set_execution_phase", "handoff", "handoff_revert"}
 
     def get_permissions(self):
         if self.action in self.SUB_ACTIONS:
@@ -163,11 +167,10 @@ class ProjectViewSet(viewsets.ModelViewSet):
         return ProjectListSerializer if self.action == "list" else ProjectSerializer
 
     def _locked(self, pk_value=None):
-        """写操作：加行锁重新读取项目，并校验可编辑范围（D7）。"""
+        """写操作：加行锁重新读取项目，并校验可编辑范围（D7）与中标转交锁定（RC3-G1，统一断言）。"""
         obj = self.get_object()
         locked = Project.objects.select_for_update().get(pk=obj.pk)
-        if not is_project_editable(self.request.user, locked):
-            raise PermissionDenied("只能修改自己负责或参与的项目")
+        assert_sales_writable(self.request.user, locked)
         return locked
 
     def perform_create(self, s):
@@ -198,9 +201,73 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 raise PermissionDenied("销售不能变更项目负责人")
             if "members" in s.validated_data and set(s.validated_data["members"]) != set(obj.members.all()):
                 raise PermissionDenied("销售不能变更项目成员")
-        obj = s.save()
-        audit(request, "update", "project", obj.id, f"修改项目 {obj.code}", {k: str(v) for k, v in s.validated_data.items() if k not in ("members", "expected_amount_note")})
+        obj = s.save(updated_by=request.user)
+        audit(request, "update", "project", obj.id, f"修改项目 {obj.code}", {"fields": sorted(k for k in s.validated_data if k != "expected_amount_note"),
+                                                                               **{k: str(v) for k, v in s.validated_data.items() if k not in ("members", "expected_amount_note")}})
         return Response(self.get_serializer(obj).data)
+
+    # ---------- RC3-G1 中标确认 / 转交商务 ----------
+    @action(detail=True, methods=["post"])
+    def handoff(self, request, pk=None):
+        """中标确认并转交商务：记录 won_at/won_by，锁定销售写入（可早于合同/订单）。幂等。"""
+        if not can(request.user, "project.handoff"):
+            raise PermissionDenied("中标确认/转交由商务或负责人执行")
+        self.get_object()
+        project = Project.objects.select_for_update().get(pk=pk)
+        if project.sales_locked_at:
+            return Response(self.get_serializer(project).data)
+        now = timezone.now()
+        happened = request.data.get("won_at")
+        if happened:
+            from django.utils.dateparse import parse_date, parse_datetime
+
+            d = parse_datetime(str(happened)) or parse_date(str(happened))
+            if d is None:
+                raise serializers.ValidationError({"won_at": "日期格式无效"})
+            if not hasattr(d, "hour"):
+                from datetime import datetime, time
+
+                d = datetime.combine(d, time(12))
+            if timezone.is_naive(d):
+                d = timezone.make_aware(d)
+            if d > now:
+                raise serializers.ValidationError({"won_at": "中标时间不能晚于当前时间"})
+        project.won_at = happened and d or now
+        project.won_by = request.user
+        project.won_note = str_param(request.data.get("note"), "note", 200) or ""
+        project.sales_locked_at = now
+        project.presale_phase = "成交"
+        project.updated_by = request.user
+        project.save(update_fields=["won_at", "won_by", "won_note", "sales_locked_at", "presale_phase", "updated_by", "updated_at"])
+        ProjectUpdate.objects.create(project=project, stream=ProjectUpdate.PRESALE, title="中标确认，项目转交商务", content=project.won_note, phase="成交",
+                                     happened_at=project.won_at, created_by=request.user)
+        audit(request, "handoff", "project", project.id, f"中标确认并转交商务 {project.code}（销售写入已锁定）")
+        return Response(self.get_serializer(project).data)
+
+    @action(detail=True, methods=["post"], url_path="handoff/revert")
+    def handoff_revert(self, request, pk=None):
+        """撤销中标（误操作/最终失标）：仅负责人，必须填写原因；已有有效合同/订单时不允许。"""
+        if not can(request.user, "project.handoff_revert"):
+            raise PermissionDenied("撤销中标仅部门负责人可执行")
+        self.get_object()
+        project = Project.objects.select_for_update().get(pk=pk)
+        reason = str_param(request.data.get("reason"), "reason", 200, required=True)
+        if not project.sales_locked_at:
+            raise BusinessError("项目当前未处于中标转交状态", code="not_won")
+        if project.orders.filter(status="CONFIRMED").exists():
+            raise BusinessError("项目已有有效的合同/订单确认，不能撤销中标；请先撤销合同/订单确认。", code="has_order")
+        target = str_param(request.data.get("presale_phase"), "presale_phase", 10) or "结果待定"
+        if target not in PRESALE_PHASES or target == "成交":
+            raise serializers.ValidationError({"presale_phase": "请选择撤销后的售前阶段（不能是“成交”）"})
+        project.won_at = project.won_by = None
+        project.won_note = ""
+        project.sales_locked_at = None
+        project.presale_phase = target
+        project.updated_by = request.user
+        project.save(update_fields=["won_at", "won_by", "won_note", "sales_locked_at", "presale_phase", "updated_by", "updated_at"])
+        ProjectUpdate.objects.create(project=project, stream=ProjectUpdate.PRESALE, title=f"撤销中标 → {target}", content=reason, phase=target, happened_at=timezone.now(), created_by=request.user)
+        audit(request, "handoff_revert", "project", project.id, f"撤销中标 {project.code}：{reason}")
+        return Response(self.get_serializer(project).data)
 
     def destroy(self, request, *a, **kw):
         if not can(request.user, "project.delete"):
@@ -270,7 +337,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             if phase not in PRESALE_PHASES:
                 raise serializers.ValidationError({"phase": "无效的售前阶段"})
             if role_of(request.user) == SALES and (phase in SALES_FORBIDDEN_PHASES or project.presale_phase == "成交"):
-                raise PermissionDenied("“成交”由合同/订单确认自动产生；已成交项目的阶段由商务/负责人维护")
+                raise PermissionDenied("“成交”由中标确认/合同订单确认产生；已成交项目的阶段由商务/负责人维护")
         upd = s.save(project=project, created_by=request.user)
         fields = ["updated_at"]
         if stream == ProjectUpdate.PRESALE and phase:

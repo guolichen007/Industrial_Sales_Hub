@@ -45,6 +45,8 @@ CAP = {
     "update.presale.write": {LEADER, ASSISTANT, SALES},
     "update.execution.write": {LEADER, ASSISTANT, FINANCE},
     "milestone.init": {LEADER, ASSISTANT},
+    "project.handoff": {LEADER, ASSISTANT},  # RC3-G1：中标确认/转交商务（锁定销售写入）
+    "project.handoff_revert": {LEADER},  # 撤销中标（误操作或失标）仅负责人，必须填原因
     # ---- 报价（D2：销售/财务/管理员均无） ----
     "quote.access": {LEADER, ASSISTANT},
     # ---- 合同/订单（D5：财务可确认，不可见/写金额） ----

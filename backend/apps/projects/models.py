@@ -24,8 +24,14 @@ class Project(models.Model):
     sales_owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="owned_projects")
     members = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="member_projects")
     expected_amount_note = models.CharField("预计规模(文字)", max_length=60, blank=True)
+    # RC3-G1 中标交接：独立的业务受控事件（可早于合同/订单签订）。sales_locked_at 非空 → 销售对该项目的一切售前写入口关闭
+    won_at = models.DateTimeField("中标时间", null=True, blank=True)
+    won_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    won_note = models.CharField("中标说明", max_length=200, blank=True)
+    sales_locked_at = models.DateTimeField("销售转交（锁定）时间", null=True, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -33,6 +39,10 @@ class Project(models.Model):
 
     def __str__(self):
         return f"{self.code} {self.name}"
+
+    @property
+    def sales_locked(self):
+        return self.sales_locked_at is not None
 
 
 class ProjectParty(models.Model):
