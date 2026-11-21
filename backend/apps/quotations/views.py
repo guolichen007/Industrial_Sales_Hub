@@ -245,6 +245,8 @@ class RevisionViewSet(viewsets.GenericViewSet):
         s.is_valid(raise_exception=True)
         s.save()
         services.bump(rev)
+        # RC3-G4：与业务修改同一事务写审计；只记字段名（值可能含价格，由审计脱敏规则处理）
+        audit(request, "update_revision", "quote_revision", rev.id, f"修改报价条款 {rev.code}", {"fields": sorted(s.validated_data), "quote_id": rev.quote_id})
         return Response(RevisionSerializer(_fresh(rev.pk)).data)
 
     @action(detail=True, methods=["post"], url_path="lines")
@@ -281,6 +283,7 @@ class RevisionViewSet(viewsets.GenericViewSet):
         ln = s.save(revision=rev, product_id=pid)
         services.recalc_revision(rev)
         services.bump(rev)
+        audit(request, "add_line", "quote_revision", rev.id, f"新增报价行 {ln.model} {ln.name}（{rev.code}）", {"line_id": ln.id, "quote_id": rev.quote_id, "unit_price": str(ln.unit_price)})
         return Response(RevisionSerializer(_fresh(rev.pk)).data, status=201)
 
     @action(detail=True, methods=["patch", "delete"], url_path=r"lines/(?P<line_id>\d+)")
@@ -291,11 +294,16 @@ class RevisionViewSet(viewsets.GenericViewSet):
         if not ln:
             raise BusinessError("报价行不存在", code="not_found", http_status=404)
         if request.method == "DELETE":
+            audit(request, "delete_line", "quote_revision", rev.id, f"删除报价行 {ln.model} {ln.name}（{rev.code}）", {"line_id": ln.id, "quote_id": rev.quote_id})
             ln.delete()
         else:
+            before = {f: str(getattr(ln, f)) for f in ("qty", "multiplier", "unit_price", "tax_rate", "discount_rate", "unit", "remark", "visible_param_keys", "params")}
             s = QuoteLineSerializer(ln, data={k: v for k, v in request.data.items() if k != "expected_version"}, partial=True)
             s.is_valid(raise_exception=True)
             s.save()
+            changed = sorted(k for k in s.validated_data if before.get(k, None) != str(getattr(ln, k)))
+            audit(request, "edit_line", "quote_revision", rev.id, f"修改报价行 {ln.model}（{rev.code}）：{'、'.join(changed) or '无变化'}",
+                  {"line_id": ln.id, "quote_id": rev.quote_id, "fields": changed, "unit_price": str(ln.unit_price)})
         services.recalc_revision(rev)
         services.bump(rev)
         return Response(RevisionSerializer(_fresh(rev.pk)).data)

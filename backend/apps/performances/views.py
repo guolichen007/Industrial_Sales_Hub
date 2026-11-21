@@ -28,10 +28,14 @@ class PerformanceSerializer(serializers.ModelSerializer):
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     source_label = serializers.CharField(source="get_source_display", read_only=True)
     order_ref = serializers.CharField(source="order_confirmation.order_ref", read_only=True, default="")
+    created_by_name = serializers.CharField(source="created_by.name", read_only=True, default="")
+    updated_by_name = serializers.CharField(source="updated_by.name", read_only=True, default="")
+    confirmed_by_name = serializers.CharField(source="confirmed_by.name", read_only=True, default="")
 
     class Meta:
         model = Performance
-        fields = ["id", "project", "project_name", "order_confirmation", "order_ref", "source", "source_label", "status", "status_label", "title", "year", "region", "industry", "product_summary", "machine_type", "host_maker", "owner_org", "investor", "sales_owner", "sales_owner_name", "internal_amount", "public_summary", "publishable", "public_name_authorized", "remark", "created_at", "confirmed_at"]
+        fields = ["id", "project", "project_name", "order_confirmation", "order_ref", "source", "source_label", "status", "status_label", "title", "year", "region", "industry", "product_summary", "machine_type", "host_maker", "owner_org", "investor", "sales_owner", "sales_owner_name", "internal_amount", "public_summary", "publishable", "public_name_authorized", "remark",
+                  "created_by_name", "created_at", "updated_by_name", "updated_at", "confirmed_by_name", "confirmed_at"]
         read_only_fields = ["order_confirmation", "source", "status", "confirmed_at"]
 
 
@@ -185,7 +189,7 @@ class PerformanceViewSet(viewsets.ModelViewSet):
     def perform_create(self, s):
         self._guard_fields(s)
         # 手工补录：独立来源 + 待核实，不能绕过订单验证直接成为已确认
-        o = s.save(source="MANUAL", status="PENDING", created_by=self.request.user)
+        o = s.save(source="MANUAL", status="PENDING", created_by=self.request.user, updated_by=self.request.user)
         audit(self.request, "create", "performance", o.id, f"手工补录业绩 {o.title}（待核实）")
 
     def perform_update(self, s):
@@ -196,8 +200,10 @@ class PerformanceViewSet(viewsets.ModelViewSet):
         if inst.source == "ORDER" and "internal_amount" in s.validated_data and s.validated_data["internal_amount"] != inst.internal_amount:
             raise BusinessError("订单生成的业绩金额以合同/订单为准，不能在业绩台账单独修改。", code="order_amount_locked")
         s.instance = inst
-        o = s.save()
-        audit(self.request, "update", "performance", o.id, f"修改业绩 {o.title}")
+        before = {k: getattr(inst, k) for k in s.validated_data}
+        o = s.save(updated_by=self.request.user)
+        changed = sorted(k for k in before if before[k] != getattr(o, k))
+        audit(self.request, "update", "performance", o.id, f"修改业绩 {o.title}：{'、'.join(changed) or '无变化'}", {"fields": changed})
 
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):

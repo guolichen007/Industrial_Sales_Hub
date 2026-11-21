@@ -293,6 +293,12 @@ class ContactViewSet(viewsets.ModelViewSet):
         c = s.save()
         audit(self.request, "create", "contact", c.id, f"新增联系人 {c.name}（{c.account.name}）")
 
+    def perform_update(self, s):
+        before = {k: getattr(s.instance, k) for k in s.validated_data}
+        c = s.save()
+        changed = sorted(k for k in before if before[k] != getattr(c, k))
+        audit(self.request, "update", "contact", c.id, f"修改联系人 {c.name}（{c.account.name}）：{'、'.join(changed) or '无变化'}", {"fields": changed, "account_id": c.account_id})
+
     def destroy(self, request, *a, **kw):
         if not can(request.user, "account.delete"):
             from rest_framework.exceptions import PermissionDenied

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { api, del, get, money, patch, post, qs } from "../api";
+import { api, del, dt, get, money, patch, post, qs } from "../api";
 import { useAuth } from "../auth";
 import { Chip, Field, Loading, Modal, PageHead, useForm, useLoad, useToast } from "../ui";
 import { ImportModal } from "./Settings";
@@ -166,7 +166,8 @@ export default function Performance() {
               <tbody>
                 {(list || []).map((p) => (
                   <tr key={p.id}>
-                    <td><b>{p.title}</b>{p.project && <div className="micro"><Link to={`/projects/${p.project}`}>{p.project_name}</Link></div>}</td>
+                    <td><b>{p.title}</b>{p.project && <div className="micro"><Link to={`/projects/${p.project}`}>{p.project_name}</Link></div>}
+                      <div className="micro">{p.created_by_name && `录入：${p.created_by_name} ${dt(p.created_at, true)}`}{p.updated_by_name && ` ｜ 修改：${p.updated_by_name} ${dt(p.updated_at, true)}`}</div></td>
                     <td>{p.year}</td><td>{[p.region, p.industry].filter(Boolean).join(" · ") || "—"}</td><td>{p.product_summary || "—"}</td><td>{p.machine_type || "—"}</td>
                     <td className="micro">{p.source_label}{p.order_ref && <div>{p.order_ref}</div>}</td>
                     {seeAmt && <td className="right num">{money(p.internal_amount)}</td>}

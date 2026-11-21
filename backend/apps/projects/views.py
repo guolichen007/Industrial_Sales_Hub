@@ -176,7 +176,7 @@ class ProjectSerializer(serializers.ModelSerializer):
 
 class ProjectViewSet(viewsets.ModelViewSet):
     permission_classes = [HasCap.of("project.edit", read_cap="project.read")]
-    SUB_ACTIONS = {"updates", "milestones", "update_milestone", "related", "parties", "remove_party", "set_execution_phase", "handoff", "handoff_revert", "tracks", "revert_track"}
+    SUB_ACTIONS = {"updates", "milestones", "update_milestone", "related", "parties", "remove_party", "set_execution_phase", "handoff", "handoff_revert", "tracks", "revert_track", "activity"}
 
     def get_permissions(self):
         if self.action in self.SUB_ACTIONS:
@@ -333,7 +333,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if ProjectParty.objects.filter(project=project, account=s.validated_data["account"], party_role=s.validated_data["party_role"]).exists():
             raise BusinessError("该组织已以相同身份参与本项目。", code="duplicate_party")
         party = s.save(project=project)
-        project.save(update_fields=["updated_at"])
+        project.updated_by = request.user
+        project.save(update_fields=["updated_by", "updated_at"])
         audit(request, "add_party", "project", project.id, f"关联参与方 {party.account.name}（{party.party_role}）")
         return Response(PartySerializer(party).data, status=201)
 
@@ -380,7 +381,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
             if role_of(request.user) == SALES and (phase in SALES_FORBIDDEN_PHASES or project.presale_phase == "成交"):
                 raise PermissionDenied("“成交”由中标确认/合同订单确认产生；已成交项目的阶段由商务/负责人维护")
         upd = s.save(project=project, created_by=request.user)
-        fields = ["updated_at"]
+        project.updated_by = request.user
+        fields = ["updated_by", "updated_at"]
         if stream == ProjectUpdate.PRESALE and phase:
             project.presale_phase = phase
             fields.append("presale_phase")
@@ -500,6 +502,39 @@ class ProjectViewSet(viewsets.ModelViewSet):
         ProjectUpdate.objects.create(project=project, stream=ProjectUpdate.EXECUTION, title=f"撤销状态记录：{ev.label_snapshot}", content=ev.revert_reason, happened_at=timezone.now(), created_by=request.user)
         audit(request, "track_revert", "project", project.id, f"撤销状态事件 {ev.track}/{ev.code}", {"event_id": ev.id})
         return Response({"summary": track_summary(project, request.user)})
+
+    # ---------- RC3-G4 项目操作动态（按角色裁剪） ----------
+    SAFE_PROJECT_ACTIONS = {"create": "新建项目", "update": "修改项目资料", "add_party": "关联参与方", "remove_party": "移除参与方", "handoff": "中标确认/转交商务",
+                            "handoff_revert": "撤销中标", "track_event": "记录交付/资金状态", "track_revert": "撤销状态记录", "init_milestones": "建立执行节点",
+                            "update_milestone": "更新执行节点", "execution_phase": "调整执行阶段", "add_update": "记录进展"}
+
+    @action(detail=True, methods=["get"])
+    def activity(self, request, pk=None):
+        """操作动态：操作人 + 服务器时间（AuditEvent.at）+ 动作。
+        - 销售：只看到动作名称、操作人、时间（不含摘要/字段值）；不含报价、订单、附件下载、审计内部细节；
+        - 负责人/商务/财务：动作 + 摘要；报价相关动作只对报价权限角色返回。"""
+        from apps.audit.models import AuditEvent
+
+        project = self.get_object()
+        user = request.user
+        sales = role_of(user) == SALES
+        qs = AuditEvent.objects.filter(resource="project", resource_id=str(project.id), action__in=self.SAFE_PROJECT_ACTIONS.keys()).order_by("-at", "-id")[:200]
+        rows = []
+        for ev in qs:
+            item = {"at": ev.at, "actor_name": ev.actor_name, "action": ev.action, "action_label": self.SAFE_PROJECT_ACTIONS.get(ev.action, ev.action)}
+            if not sales:
+                item["summary"] = ev.summary
+                if isinstance(ev.detail, dict) and ev.detail.get("fields"):
+                    item["fields"] = ev.detail["fields"]
+            rows.append(item)
+        if can(user, "quote.access"):
+            qids = list(project.quotes.values_list("id", flat=True))
+            rids = [str(x) for x in project.quotes.values_list("revisions__id", flat=True) if x]
+            for ev in AuditEvent.objects.filter(Q(resource="quote", resource_id__in=[str(x) for x in qids]) | Q(resource="quote_revision", resource_id__in=rids)).order_by("-at")[:200]:
+                rows.append({"at": ev.at, "actor_name": ev.actor_name, "action": ev.action, "action_label": "报价：" + ev.action, "summary": ev.summary,
+                             **({"fields": ev.detail["fields"]} if isinstance(ev.detail, dict) and ev.detail.get("fields") else {})})
+        rows.sort(key=lambda r: r["at"], reverse=True)
+        return Response(rows[:300])
 
     # ---------- 360° 关联 ----------
     @action(detail=True, methods=["get"])

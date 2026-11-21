@@ -147,6 +147,21 @@ function TrackPanel({ p, onChanged }: { p: any; onChanged: () => void }) {
   );
 }
 
+function ActivityPanel({ pid }: { pid: number }) {
+  const [rows, , loading, err] = useLoad(() => get<any[]>(`/projects/${pid}/activity/`), [pid]);
+  if (loading && !rows) return <Loading err={err} />;
+  return (
+    <div className="card cardpad">
+      <div className="sectionhead"><h2>操作记录</h2><small>操作人 · 服务器记录时间；销售只看到动作，不含内部摘要与价格</small></div>
+      <div className="tablewrap"><table className="data"><thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>说明</th></tr></thead>
+        <tbody>{(rows || []).map((r, i) => (
+          <tr key={i}><td className="micro">{dt(r.at, true)}</td><td>{r.actor_name || "—"}</td><td>{r.action_label}</td>
+            <td className="micro" style={{ whiteSpace: "normal" }}>{r.summary || ""}{r.fields && <div>字段：{r.fields.join("、")}</div>}</td></tr>
+        ))}{rows && rows.length === 0 && <tr><td colSpan={4} className="empty-cell">暂无</td></tr>}</tbody></table></div>
+    </div>
+  );
+}
+
 function MilestoneRow({ m, projectId, editable, onSaved }: { m: any; projectId: number; editable: boolean; onSaved: () => void }) {
   const { notify, fail } = useToast();
   const [edit, setEdit] = useState(false);
@@ -264,7 +279,7 @@ export default function ProjectDetail() {
     }
   };
   const done = p.milestones.filter((m: any) => m.state === "DONE" || m.state === "SKIPPED").length;
-  const tabs: [string, string][] = [["overview", "项目全景"], ["presale", "售前跟进"], ["execution", "合同执行"]];
+  const tabs: [string, string][] = [["overview", "项目全景"], ["presale", "售前跟进"], ["execution", "合同执行"], ["activity", "操作记录"]];
   if (editable || can("project.read")) tabs.push(["files", editable ? "附件" : "交付文件"]);
   return (
     <>
@@ -375,7 +390,7 @@ export default function ProjectDetail() {
               <div className="timeline">
                 {(updates || []).slice(0, 6).map((u) => (
                   <div className="timeitem" key={u.id}>
-                    <div className="time">{dt(u.happened_at, true)} · {u.created_by_name} · {u.stream === "PRESALE" ? "售前" : "执行"}</div>
+                    <div className="time">发生 {dt(u.happened_at, true)} · {u.created_by_name} 录入于 {dt(u.created_at, true)} · {u.stream === "PRESALE" ? "售前" : "执行"}</div>
                     <b>{u.title}</b>
                     {u.content && <div className="sub">{u.content}</div>}
                   </div>
@@ -393,6 +408,7 @@ export default function ProjectDetail() {
         </div>
       )}
 
+      {tab === "activity" && <ActivityPanel pid={pid} />}
       {(tab === "presale" || tab === "execution") && (
         <div className="split">
           <div className="card cardpad">
@@ -403,7 +419,7 @@ export default function ProjectDetail() {
             <div className="timeline">
               {(updates || []).filter((u) => u.stream === (tab === "presale" ? "PRESALE" : "EXECUTION")).map((u) => (
                 <div className="timeitem" key={u.id}>
-                  <div className="time">{dt(u.happened_at, true)} · {u.created_by_name}{u.phase && ` · ${u.phase}`}{u.contact_name && ` · 联系：${u.contact_name}`}</div>
+                  <div className="time">发生 {dt(u.happened_at, true)} · {u.created_by_name} 录入于 {dt(u.created_at, true)}{u.phase && ` · ${u.phase}`}{u.contact_name && ` · 联系：${u.contact_name}`}</div>
                   <b>{u.title}</b>
                   {u.content && <div className="sub" style={{ whiteSpace: "pre-wrap" }}>{u.content}</div>}
                   {u.next_action && <div className="micro">下一步：{u.next_action}{u.next_action_date && `（${u.next_action_date}）`}</div>}
