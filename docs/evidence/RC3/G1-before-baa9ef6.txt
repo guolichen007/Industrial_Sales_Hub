@@ -1,0 +1,9 @@
+>       assert r.status_code == 403, f"RC2 实际 {r.status_code}"
+E       AssertionError: RC2 实际 200
+>       assert r.status_code == 403, f"RC2 实际 {r.status_code}"
+E       AssertionError: RC2 实际 201
+>       assert (r1.status_code, r2.status_code) == (403, 403), f"RC2 实际 {(r1.status_code, r2.status_code)}"
+E       AssertionError: RC2 实际 (201, 201)
+>       assert r.status_code == 200 and r.json()["can_edit"] is False, f"RC2 实际 can_edit={r.json().get('can_edit')}"
+E       AssertionError: RC2 实际 can_edit=True
+4 failed in 8.39s

@@ -80,3 +80,70 @@ def render_case_pdf(snap: dict) -> bytes:
 
     doc.build(story, canvasmaker=make_numbered_canvas(" · ".join(x for x in [issuer, "项目案例", "内容已经过公开字段审核"] if x), F))
     return buf.getvalue()
+
+
+# ====================== RC3-G3 内部销售业绩 PDF（不是对外案例） ======================
+INTERNAL_FIELDS = ("title", "year", "region", "industry", "product_summary", "machine_type", "host_maker", "owner_org", "sales_owner_name", "status_label")
+INTERNAL_MARK = "公司内部资料 · 禁止外发"
+
+
+def internal_row(p) -> dict:
+    """内部安全版字段白名单：不含金额、合同/订单号、内部备注、公开授权状态。"""
+    return {
+        "title": p.title, "year": p.year, "region": p.region, "industry": p.industry, "product_summary": p.product_summary, "machine_type": p.machine_type,
+        "host_maker": p.host_maker, "owner_org": p.owner_org, "sales_owner_name": p.sales_owner.name if p.sales_owner else "", "status_label": p.get_status_display(),
+    }
+
+
+def render_internal_performance_pdf(rows, filters_text: str, generator: str, generated_at: str) -> bytes:
+    for r in rows:
+        extra = set(r) - set(INTERNAL_FIELDS)
+        if extra:
+            raise ValueError(f"内部业绩 PDF 含非白名单字段：{extra}")
+    from reportlab.lib.pagesizes import landscape
+
+    f = register_fonts()
+    F, FB = f["font"], f["bold"]
+    base = ParagraphStyle("b", fontName=F, fontSize=8, leading=10.5)
+    small = ParagraphStyle("s", parent=base, fontSize=7.5, leading=10, textColor=colors.HexColor("#5b6772"))
+    head = ParagraphStyle("h", parent=base, fontName=FB, textColor=colors.white)
+    h1 = ParagraphStyle("h1", parent=base, fontName=FB, fontSize=16, leading=20, textColor=colors.HexColor("#10263b"))
+    buf = io.BytesIO()
+    page = landscape(A4)
+    doc = SimpleDocTemplate(buf, pagesize=page, leftMargin=12 * mm, rightMargin=12 * mm, topMargin=14 * mm, bottomMargin=16 * mm,
+                            title="内部业绩查询结果（禁止外发）", author=generator, subject="INTERNAL-内部业绩", creator="Industrial Sales Hub", producer="Industrial Sales Hub", invariant=1)
+    W = page[0] - 24 * mm
+    story = [Paragraph(mx("内部业绩查询结果", True), h1), Spacer(1, 2 * mm),
+             Paragraph(mx(f"【{INTERNAL_MARK}】本文件为内部销售参考，不是对外案例；对外使用请通过“对外案例”生成经公开审批的案例册。"), ParagraphStyle("w", parent=base, textColor=colors.HexColor("#b03030"))),
+             Spacer(1, 1.5 * mm), Paragraph(mx(f"筛选条件：{filters_text or '（无）'}"), small),
+             Paragraph(mx(f"生成人：{generator}　生成时间：{generated_at}　共 {len(rows)} 条"), small), Spacer(1, 3 * mm)]
+    hdr = ["序号", "业绩名称", "年份", "地区", "行业", "供货产品", "主机类型", "主机厂", "业主", "销售", "状态"]
+    cols = [10 * mm, None, 12 * mm, 20 * mm, 20 * mm, 40 * mm, 22 * mm, 32 * mm, 32 * mm, 18 * mm, 15 * mm]
+    cols[1] = W - sum(c for c in cols if c)
+    data = [[Paragraph(mx(h, True), head) for h in hdr]]
+    for i, r in enumerate(rows, 1):
+        data.append([Paragraph(mx(str(x if x is not None else "")), base) for x in
+                     [i, r["title"], r["year"], r["region"], r["industry"], r["product_summary"], r["machine_type"], r["host_maker"], r["owner_org"], r["sales_owner_name"], r["status_label"]]])
+    t = Table(data, colWidths=cols, repeatRows=1)
+    st = [("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#10263b")), ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#c9d1d9")), ("VALIGN", (0, 0), (-1, -1), "TOP")]
+    for r in range(2, len(data), 2):
+        st.append(("BACKGROUND", (0, r), (-1, r), colors.HexColor("#f1f4f7")))
+    t.setStyle(TableStyle(st))
+    story.append(t)
+    base_canvas = make_numbered_canvas(f"内部业绩 · {generator} · {generated_at} · {INTERNAL_MARK}", F)
+
+    class Watermark(base_canvas):
+        def _draw_footer(self, total):
+            super()._draw_footer(total)
+            from apps.common.pdfkit import draw_mixed
+
+            w, h = self._pagesize
+            self.saveState()
+            self.setFillColorRGB(0.7, 0.15, 0.15, alpha=0.12)
+            self.translate(w / 2, h / 2)
+            self.rotate(28)
+            draw_mixed(self, 0, 0, INTERNAL_MARK, F, 34, align="center")
+            self.restoreState()
+
+    doc.build(story, canvasmaker=Watermark)
+    return buf.getvalue()
