@@ -112,7 +112,7 @@ class QuoteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Quote
-        fields = ["id", "code", "project", "project_name", "project_code", "recipient", "recipient_name", "recipient_contact", "legal_entity", "legal_entity_name", "title", "status", "status_label", "owner_name", "created_at", "updated_at", "latest", "revisions"]
+        fields = ["id", "code", "project", "project_name", "project_code", "recipient", "recipient_name", "recipient_contact", "legal_entity", "legal_entity_name", "title", "inquiry", "status", "status_label", "owner_name", "created_at", "updated_at", "latest", "revisions"]
         read_only_fields = ["code", "status"]
 
     def get_latest(self, obj):
@@ -130,6 +130,10 @@ class QuoteSerializer(serializers.ModelSerializer):
         rec = data.get("recipient") or (self.instance and self.instance.recipient)
         if rc and rec and rc.account_id != rec.id:
             raise serializers.ValidationError({"recipient_contact": "联系人不属于接收客户"})
+        inq = data.get("inquiry")
+        proj = data.get("project") or (self.instance and self.instance.project)
+        if inq and proj and inq.project_id != proj.id:
+            raise serializers.ValidationError({"inquiry": "询价不属于该项目"})
         ent = data.get("legal_entity")
         if ent and not ent.active:
             raise serializers.ValidationError({"legal_entity": "出具主体已停用"})
@@ -168,6 +172,9 @@ class QuoteViewSet(viewsets.ModelViewSet):
         def _create(code):
             q = s.save(code=code, owner=self.request.user)
             QuoteRevision.objects.create(quote=q, version=1, quote_date=timezone.localdate(), terms=q.legal_entity.default_terms, price_basis=q.legal_entity.price_basis, created_by=self.request.user)
+            if q.inquiry_id and q.inquiry.status == "OPEN":
+                q.inquiry.status = "QUOTED"
+                q.inquiry.save(update_fields=["status", "updated_at"])
             return q
 
         q = create_with_code(services.next_quote_code, _create, serializer=s)
@@ -413,3 +420,81 @@ class PriceHistoryView(APIView):
                          "qty": str(ln.qty), "multiplier": str(ln.multiplier), "unit_price": str(ln.unit_price), "price_basis": r.price_basis, "tax_rate": str(ln.tax_rate),
                          "discount_rate": str(ln.discount_rate), "line_net": str(ln.line_net), "line_gross": str(ln.line_gross)})
         return Response(rows)
+
+
+class InquirySerializer(serializers.ModelSerializer):
+    project_name = serializers.CharField(source="project.name", read_only=True)
+    inquirer_name = serializers.CharField(source="inquirer.name", read_only=True, default="")
+    created_by_name = serializers.CharField(source="created_by.name", read_only=True, default="")
+    updated_by_name = serializers.CharField(source="updated_by.name", read_only=True, default="")
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    quote_codes = serializers.SerializerMethodField()
+
+    class Meta:
+        from .models import Inquiry
+
+        model = Inquiry
+        fields = ["id", "code", "project", "project_name", "inquirer", "inquirer_name", "inquirer_contact", "received_on", "due_on", "requirement", "items", "status", "status_label",
+                  "quote_codes", "created_by_name", "created_at", "updated_by_name", "updated_at"]
+        read_only_fields = ["code"]
+
+    def get_quote_codes(self, obj):
+        # 只返回编号（不含金额）；无报价权限的角色也只能看到“已有哪些报价”
+        return [q.code for q in obj.quotes.all()]
+
+    def validate_items(self, v):
+        if not isinstance(v, list) or len(v) > 200:
+            raise serializers.ValidationError("明细格式错误（最多 200 行）")
+        out = []
+        for i, it in enumerate(v):
+            if not isinstance(it, dict):
+                raise serializers.ValidationError(f"第 {i + 1} 行格式错误")
+            bad = {k for k in it if any(w in k.lower() for w in ("price", "amount", "金额", "单价"))}
+            if bad:
+                raise serializers.ValidationError("询价明细不记录价格/金额（价格在报价中心维护）")
+            out.append({k: str(it.get(k, ""))[:120] for k in ("model", "name", "qty", "unit", "note")})
+        return out
+
+    def validate(self, data):
+        if data.get("due_on") and data.get("received_on") and data["due_on"] < data["received_on"]:
+            raise serializers.ValidationError({"due_on": "要求回复日期不能早于收到日期"})
+        return data
+
+
+class InquiryViewSet(viewsets.ModelViewSet):
+    """询价登记：负责人/商务（BUSINESS 口径下含财务）。销售、管理员一律 403。"""
+
+    serializer_class = InquirySerializer
+    permission_classes = [HasCap.of("inquiry.write", read_cap="inquiry.read")]
+    http_method_names = ["get", "post", "patch"]
+
+    def get_queryset(self):
+        from .models import Inquiry
+
+        qs = Inquiry.objects.select_related("project", "inquirer", "created_by", "updated_by").prefetch_related("quotes")
+        p = self.request.query_params
+        if (v := int_param(p.get("project"), "project")) is not None:
+            qs = qs.filter(project_id=v)
+        if (st := p.get("status")) in ("OPEN", "QUOTED", "CLOSED"):
+            qs = qs.filter(status=st)
+        if q := p.get("q"):
+            q = str_param(q, "q", 100)
+            qs = qs.filter(Q(code__icontains=q) | Q(project__name__icontains=q) | Q(inquirer__name__icontains=q) | Q(requirement__icontains=q))
+        return qs
+
+    def perform_create(self, s):
+        from apps.common.retry import create_with_code
+
+        from .models import Inquiry
+
+        def next_code():
+            prefix = f"XJ-{timezone.localdate().year}-"
+            last = Inquiry.objects.filter(code__startswith=prefix).order_by("-code").values_list("code", flat=True).first()
+            return f"{prefix}{(int(last.rsplit('-', 1)[1]) + 1) if last else 1:04d}"
+
+        o = create_with_code(next_code, lambda code: s.save(code=code, created_by=self.request.user, updated_by=self.request.user), serializer=s)
+        audit(self.request, "create", "inquiry", o.id, f"登记询价 {o.code}（{o.project.name}）")
+
+    def perform_update(self, s):
+        o = s.save(updated_by=self.request.user)
+        audit(self.request, "update", "inquiry", o.id, f"修改询价 {o.code}", {"fields": sorted(s.validated_data)})

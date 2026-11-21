@@ -118,7 +118,12 @@ def test_finance_cannot_edit_quotes_or_presale(client_for, make_quote, base):
     c = client_for("finance")
     assert c.patch(f"/api/quote-revisions/{rid}/", {"remark": "x"}, format="json").status_code == 403
     assert c.post(f"/api/quotations/{qid}/status/", {"status": "CANCELLED"}, format="json").status_code == 403
-    assert c.patch(f"/api/projects/{base['p_sales'].id}/", {"name": "x"}, format="json").status_code == 403
+    # RC3-G0 口径调整：BUSINESS 口径下财务可修改项目资料（docs/RC3-业务角色与字段矩阵.md G0-3）；RC2 口径仍 403
+    assert c.patch(f"/api/projects/{base['p_sales'].id}/", {"name": "x"}, format="json").status_code == 200
+    from django.test import override_settings
+
+    with override_settings(FINANCE_SCOPE="RC2"):
+        assert c.patch(f"/api/projects/{base['p_sales'].id}/", {"name": "y"}, format="json").status_code == 403
 
 
 # ---------- 产品与账号 ----------

@@ -11,7 +11,7 @@ from apps.common.errors import BusinessError
 from apps.common.params import int_param, str_param
 from apps.common.roles import SALES, HasCap, can, role_of
 
-from .models import EXECUTION_PHASES, MILESTONE_STAGES, PRESALE_PHASES, ExecutionMilestone, Project, ProjectParty, ProjectUpdate
+from .models import EXECUTION_PHASES, MILESTONE_STAGES, PRESALE_PHASES, ExecutionMilestone, Project, ProjectParty, ProjectUpdate, StageDef, TrackEvent
 from .scope import assert_sales_writable, editable_projects, is_project_editable, visible_projects
 
 # 销售不能直接设置的售前阶段：“成交”只能由合同/订单确认产生
@@ -39,8 +39,27 @@ class UpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ProjectUpdate
-        fields = ["id", "project", "stream", "title", "content", "phase", "contact_name", "next_action", "next_action_date", "happened_at", "created_by_name", "created_at"]
-        read_only_fields = ["project"]
+        fields = ["id", "project", "stream", "title", "content", "public_content", "phase", "contact_name", "next_action", "next_action_date", "happened_at", "created_by_name", "created_at"]
+        read_only_fields = ["project", "created_at"]
+
+    def validate_happened_at(self, v):
+        # 业务发生时间可补录，但不能写成未来（系统录入时间 created_at 由服务器生成，客户端无法提供）
+        if v and v > timezone.now() + timezone.timedelta(minutes=5):
+            raise serializers.ValidationError("发生时间不能晚于当前时间")
+        return v
+
+    def to_representation(self, obj):
+        data = super().to_representation(obj)
+        req = self.context.get("request")
+        if req is not None and role_of(req.user) == SALES and not sales_may_see_content(req.user, obj):
+            # RC3-T24：商务/财务录入的内部自由文本对销售不可见，只给“销售可见说明”
+            data["content"] = obj.public_content
+        return data
+
+
+def sales_may_see_content(user, upd):
+    """销售能看到原始内容的情形：本人录入的售前跟进。其他（执行线、商务代录）只看 public_content。"""
+    return upd.stream == ProjectUpdate.PRESALE and upd.created_by_id == user.id
 
 
 class MilestoneSerializer(serializers.ModelSerializer):
@@ -50,8 +69,17 @@ class MilestoneSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ExecutionMilestone
-        fields = ["id", "stage", "sort", "state", "owner_name", "planned_date", "actual_date", "note", "delay_reason", "updated_by_name", "updated_at"]
+        fields = ["id", "stage", "sort", "state", "owner_name", "planned_date", "actual_date", "note", "delay_reason", "public_note", "updated_by_name", "updated_at"]
         read_only_fields = ["stage", "sort"]
+
+    def to_representation(self, obj):
+        data = super().to_representation(obj)
+        req = self.context.get("request")
+        if req is None or role_of(req.user) == SALES:
+            # RC3-T24：内部说明与延期原因不返回给销售（未传 request 时按最严格处理）
+            data.pop("note", None)
+            data.pop("delay_reason", None)
+        return data
 
     def validate(self, data):
         state = data.get("state", self.instance.state if self.instance else "PENDING")
@@ -94,7 +122,8 @@ class ProjectSerializer(serializers.ModelSerializer):
 
     sales_owner_name = serializers.CharField(source="sales_owner.name", read_only=True, default="")
     parties = PartySerializer(many=True, read_only=True)
-    milestones = MilestoneSerializer(many=True, read_only=True)
+    milestones = serializers.SerializerMethodField()
+    tracks = serializers.SerializerMethodField()
     member_names = serializers.SerializerMethodField()
     can_edit = serializers.SerializerMethodField()
     won_by_name = serializers.CharField(source="won_by.name", read_only=True, default="")
@@ -103,15 +132,26 @@ class ProjectSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Project
-        fields = ["id", "code", "name", "industry", "machine_type", "region", "location", "investor", "description", "presale_phase", "execution_phase", "sales_owner", "sales_owner_name", "members", "member_names", "expected_amount_note", "parties", "milestones", "can_edit",
+        fields = ["id", "code", "name", "industry", "machine_type", "region", "location", "investor", "description", "presale_phase", "execution_phase", "sales_owner", "sales_owner_name", "members", "member_names", "expected_amount_note", "parties", "milestones", "tracks", "delivery_due_on", "can_edit",
                   "won_at", "won_by_name", "won_note", "sales_locked_at", "created_by_name", "created_at", "updated_by_name", "updated_at"]
         read_only_fields = ["code", "execution_phase", "won_at", "won_note", "sales_locked_at"]
 
     def get_member_names(self, obj):
         return [u.name for u in obj.members.all()]
 
+    def get_milestones(self, obj):
+        return MilestoneSerializer(obj.milestones.all(), many=True, context=self.context).data
+
+    def get_tracks(self, obj):
+        return track_summary(obj, self.context["request"].user)
+
     def get_can_edit(self, obj):
         return is_project_editable(self.context["request"].user, obj)
+
+    def validate_delivery_due_on(self, v):
+        if v is not None and not can(self.context["request"].user, "delivery.write"):
+            raise serializers.ValidationError("计划交付日期由商务维护")
+        return v
 
     def to_representation(self, obj):
         data = super().to_representation(obj)
@@ -136,7 +176,7 @@ class ProjectSerializer(serializers.ModelSerializer):
 
 class ProjectViewSet(viewsets.ModelViewSet):
     permission_classes = [HasCap.of("project.edit", read_cap="project.read")]
-    SUB_ACTIONS = {"updates", "milestones", "update_milestone", "related", "parties", "remove_party", "set_execution_phase", "handoff", "handoff_revert"}
+    SUB_ACTIONS = {"updates", "milestones", "update_milestone", "related", "parties", "remove_party", "set_execution_phase", "handoff", "handoff_revert", "tracks", "revert_track"}
 
     def get_permissions(self):
         if self.action in self.SUB_ACTIONS:
@@ -319,8 +359,9 @@ class ProjectViewSet(viewsets.ModelViewSet):
             qs = project.updates.select_related("created_by")
             if st := request.query_params.get("stream"):
                 qs = qs.filter(stream=st)
-            return Response(UpdateSerializer(qs, many=True).data)
-        s = UpdateSerializer(data={**request.data, "happened_at": request.data.get("happened_at") or timezone.now()})
+            return Response(UpdateSerializer(qs, many=True, context={"request": request}).data)
+        body = {k: v for k, v in request.data.items() if k != "created_at"}  # 系统录入时间不接受客户端提供
+        s = UpdateSerializer(data={**body, "happened_at": body.get("happened_at") or timezone.now()}, context={"request": request})
         s.is_valid(raise_exception=True)
         stream = s.validated_data["stream"]
         if stream == ProjectUpdate.PRESALE:
@@ -345,7 +386,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             fields.append("presale_phase")
         project.save(update_fields=fields)
         audit(request, "add_update", "project", project.id, f"[{upd.get_stream_display()}] {upd.title}")
-        return Response(UpdateSerializer(upd).data, status=201)
+        return Response(UpdateSerializer(upd, context={"request": request}).data, status=201)
 
     # ---------- 执行节点 ----------
     @action(detail=True, methods=["get", "post"])
@@ -360,7 +401,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             project = Project.objects.select_for_update().get(pk=project.pk)
             init_milestones(project, request.user)
             audit(request, "init_milestones", "project", project.id, "初始化执行节点")
-        return Response(MilestoneSerializer(project.milestones.select_related("updated_by"), many=True).data)
+        return Response(MilestoneSerializer(project.milestones.select_related("updated_by"), many=True, context={"request": request}).data)
 
     @action(detail=True, methods=["patch"], url_path=r"milestones/(?P<mid>\d+)")
     def update_milestone(self, request, pk=None, mid=None):
@@ -372,17 +413,18 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if not m:
             raise BusinessError("节点不存在", code="not_found", http_status=404)
         old = m.get_state_display()
-        s = MilestoneSerializer(m, data=request.data, partial=True)
+        s = MilestoneSerializer(m, data=request.data, partial=True, context={"request": request})
         s.is_valid(raise_exception=True)
         m = s.save(updated_by=request.user)
         if m.state == "DONE" and not m.actual_date:
             m.actual_date = timezone.localdate()
             m.save(update_fields=["actual_date"])
         note = m.note if m.state != "DELAYED" else f"延期原因：{m.delay_reason}。{m.note}".strip()
-        ProjectUpdate.objects.create(project=project, stream=ProjectUpdate.EXECUTION, title=f"{m.stage}：{old} → {m.get_state_display()}", content=note, phase=m.stage, happened_at=timezone.now(), created_by=request.user)
+        ProjectUpdate.objects.create(project=project, stream=ProjectUpdate.EXECUTION, title=f"{m.stage}：{old} → {m.get_state_display()}", content=note, public_content=m.public_note,
+                                     phase=m.stage, happened_at=timezone.now(), created_by=request.user)
         refresh_execution_phase(project)
         audit(request, "update_milestone", "project", project.id, f"执行节点 {m.stage} → {m.get_state_display()}")
-        return Response(MilestoneSerializer(m).data)
+        return Response(MilestoneSerializer(m, context={"request": request}).data)
 
     @action(detail=True, methods=["post"], url_path="execution-phase")
     def set_execution_phase(self, request, pk=None):
@@ -406,6 +448,59 @@ class ProjectViewSet(viewsets.ModelViewSet):
         audit(request, "execution_phase", "project", project.id, f"执行阶段 → {target}")
         return Response(ProjectSerializer(project, context={"request": request}).data)
 
+    # ---------- RC3-G2 状态线 ----------
+    @action(detail=True, methods=["get", "post"])
+    def tracks(self, request, pk=None):
+        """GET：两条状态线历史（销售无 private_note）；POST：记录一个状态事件（delivery.write / payment.write）。"""
+        project = self.get_object()
+        if request.method == "GET":
+            qs = project.track_events.select_related("created_by", "reverted_by")
+            return Response({"summary": track_summary(project, request.user), "events": TrackEventSerializer(qs, many=True, context={"request": request}).data})
+        track = request.data.get("track")
+        if track not in ("DELIVERY", "PAYMENT"):
+            raise serializers.ValidationError({"track": "只能是 DELIVERY 或 PAYMENT"})
+        if not can(request.user, "delivery.write" if track == "DELIVERY" else "payment.write"):
+            raise PermissionDenied("生产/交付由商务维护，资金状态由财务/负责人维护" if track == "PAYMENT" else "生产/交付状态由商务/财务维护")
+        project = Project.objects.select_for_update().get(pk=project.pk)
+        if not project.sales_locked_at and not project.orders.filter(status="CONFIRMED").exists():
+            raise BusinessError("项目尚未中标确认或订单确认，不能记录执行/资金状态", code="not_won")
+        code = str(request.data.get("code") or "")
+        d = stage_map(track).get(code)
+        if d is None or not d.active:
+            raise serializers.ValidationError({"code": "阶段不存在或已停用"})
+        body = {k: request.data.get(k) for k in ("happened_on", "public_note", "private_note") if k in request.data}
+        body.setdefault("happened_on", timezone.localdate().isoformat())
+        s = TrackEventSerializer(data={**body, "track": track, "code": code}, context={"request": request})
+        s.is_valid(raise_exception=True)
+        if s.validated_data["happened_on"] > timezone.localdate():
+            raise serializers.ValidationError({"happened_on": "发生日期不能晚于今天"})
+        ev = s.save(project=project, created_by=request.user, label_snapshot=d.label)
+        project.updated_by = request.user
+        project.save(update_fields=["updated_by", "updated_at"])
+        ProjectUpdate.objects.create(project=project, stream=ProjectUpdate.EXECUTION, title=f"{'生产/交付' if track == 'DELIVERY' else '资金状态'}：{d.label}",
+                                     content=ev.private_note, public_content=ev.public_note, phase=code, happened_at=timezone.now(), created_by=request.user)
+        audit(request, "track_event", "project", project.id, f"{track} → {code}（{d.label}）", {"event_id": ev.id, "happened_on": str(ev.happened_on)})
+        return Response({"summary": track_summary(project, request.user), "event": TrackEventSerializer(ev, context={"request": request}).data}, status=201)
+
+    @action(detail=True, methods=["post"], url_path=r"tracks/(?P<eid>\d+)/revert")
+    def revert_track(self, request, pk=None, eid=None):
+        """撤销一条状态事件（录错）：只标记，不删除；当前状态回到上一条有效事件。"""
+        self.get_object()
+        project = Project.objects.select_for_update().get(pk=pk)
+        ev = project.track_events.select_for_update().filter(pk=int_param(eid, "eid")).first()
+        if not ev:
+            raise BusinessError("事件不存在", code="not_found", http_status=404)
+        if not can(request.user, "delivery.write" if ev.track == "DELIVERY" else "payment.write"):
+            raise PermissionDenied()
+        if ev.reverted_at:
+            raise BusinessError("该事件已撤销", code="already_reverted")
+        ev.reverted_at, ev.reverted_by = timezone.now(), request.user
+        ev.revert_reason = str_param(request.data.get("reason"), "reason", 200, required=True)
+        ev.save(update_fields=["reverted_at", "reverted_by", "revert_reason"])
+        ProjectUpdate.objects.create(project=project, stream=ProjectUpdate.EXECUTION, title=f"撤销状态记录：{ev.label_snapshot}", content=ev.revert_reason, happened_at=timezone.now(), created_by=request.user)
+        audit(request, "track_revert", "project", project.id, f"撤销状态事件 {ev.track}/{ev.code}", {"event_id": ev.id})
+        return Response({"summary": track_summary(project, request.user)})
+
     # ---------- 360° 关联 ----------
     @action(detail=True, methods=["get"])
     def related(self, request, pk=None):
@@ -422,6 +517,121 @@ class ProjectViewSet(viewsets.ModelViewSet):
             "orders": [order_payload(o, user) for o in project.orders.select_related("legal_entity", "customer", "quote", "quote_revision", "confirmed_by")] if can(user, "order.access") else [],
             "performances": [performance_payload(p, user) for p in performances_for(user).filter(project=project)],
         })
+
+
+# ====================== RC3-G2 两条状态线 ======================
+def stage_map(track):
+    ensure_default_stages()
+    return {d.code: d for d in StageDef.objects.filter(track=track)}
+
+
+def ensure_default_stages():
+    from .models import DEFAULT_STAGES
+
+    if StageDef.objects.exists():
+        return
+    for track, rows in DEFAULT_STAGES.items():
+        for i, (code, label, final) in enumerate(rows):
+            StageDef.objects.get_or_create(track=track, code=code, defaults={"label": label, "sort": i * 10, "is_final": final})
+
+
+def current_event(project, track):
+    return project.track_events.filter(track=track, reverted_at__isnull=True).order_by("-happened_on", "-id").first()
+
+
+def track_summary(project, user):
+    """项目两条状态线的当前值。所有角色可见：阶段（当前展示名）、发生日期、记录人与系统时间、公开说明；
+    仅有对应写权限的角色可见 private_note。**任何角色都不返回金额**（模型中不存在金额字段）。"""
+    out = {}
+    for track, cap in (("DELIVERY", "delivery.write"), ("PAYMENT", "payment.write")):
+        ev = current_event(project, track)
+        defs = stage_map(track)
+        if ev is None:
+            out[track.lower()] = None
+            continue
+        d = defs.get(ev.code)
+        item = {"code": ev.code, "label": d.label if d else ev.label_snapshot, "is_final": bool(d and d.is_final), "happened_on": ev.happened_on,
+                "created_at": ev.created_at, "created_by_name": ev.created_by.name if ev.created_by else "", "public_note": ev.public_note}
+        if can(user, cap):
+            item["private_note"] = ev.private_note
+        out[track.lower()] = item
+    due = project.delivery_due_on
+    final = out.get("delivery") and out["delivery"]["is_final"]
+    out["delivery_overdue"] = bool(due and not final and due < timezone.localdate())
+    return out
+
+
+class TrackEventSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.CharField(source="created_by.name", read_only=True, default="")
+    reverted_by_name = serializers.CharField(source="reverted_by.name", read_only=True, default="")
+    label = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TrackEvent
+        fields = ["id", "track", "code", "label", "label_snapshot", "happened_on", "created_at", "created_by_name", "public_note", "private_note", "reverted_at", "reverted_by_name", "revert_reason"]
+        read_only_fields = ["label_snapshot", "created_at", "reverted_at", "revert_reason"]
+
+    def get_label(self, obj):
+        d = StageDef.objects.filter(track=obj.track, code=obj.code).first()
+        return d.label if d else obj.label_snapshot
+
+    def to_representation(self, obj):
+        data = super().to_representation(obj)
+        req = self.context.get("request")
+        cap = "delivery.write" if obj.track == "DELIVERY" else "payment.write"
+        if req is None or not can(req.user, cap):
+            data.pop("private_note", None)
+            data.pop("revert_reason", None)
+        return data
+
+
+class StageDefSerializer(serializers.ModelSerializer):
+    updated_by_name = serializers.CharField(source="updated_by.name", read_only=True, default="")
+    used = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StageDef
+        fields = ["id", "track", "code", "label", "sort", "active", "is_final", "used", "updated_by_name", "updated_at"]
+        read_only_fields = ["track", "code"]  # 稳定 code：创建后不可修改
+
+    def get_used(self, obj):
+        return TrackEvent.objects.filter(track=obj.track, code=obj.code).exists()
+
+
+class StageDefViewSet(viewsets.ModelViewSet):
+    """阶段配置：所有业务角色可读；负责人/商务可改展示名、排序、停用，可新增阶段（新 code）；不提供删除。"""
+
+    serializer_class = StageDefSerializer
+    permission_classes = [HasCap.of("stage.config", read_cap="project.read")]
+    http_method_names = ["get", "post", "patch"]
+
+    def get_queryset(self):
+        ensure_default_stages()
+        qs = StageDef.objects.select_related("updated_by")
+        if (t := self.request.query_params.get("track")) in ("DELIVERY", "PAYMENT"):
+            qs = qs.filter(track=t)
+        return qs
+
+    def create(self, request, *a, **kw):
+        import re as _re
+
+        track = request.data.get("track")
+        code = str(request.data.get("code") or "").strip().upper()
+        if track not in ("DELIVERY", "PAYMENT") or not _re.match(r"^[A-Z][A-Z0-9_]{1,29}$", code):
+            raise serializers.ValidationError({"code": "track 为 DELIVERY/PAYMENT；code 为大写字母/数字/下划线（2–30 位），创建后不可修改"})
+        if StageDef.objects.filter(track=track, code=code).exists():
+            raise BusinessError("该阶段代码已存在", code="duplicate_stage")
+        s = StageDefSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        d = s.save(track=track, code=code, updated_by=request.user)
+        audit(request, "create", "stage_def", d.id, f"新增阶段 {track}/{code} {d.label}")
+        return Response(StageDefSerializer(d).data, status=201)
+
+    def perform_update(self, s):
+        before = {k: getattr(s.instance, k) for k in ("label", "sort", "active", "is_final")}
+        d = s.save(updated_by=self.request.user)
+        changed = {k: [str(before[k]), str(getattr(d, k))] for k in before if before[k] != getattr(d, k)}
+        audit(self.request, "update", "stage_def", d.id, f"修改阶段 {d.track}/{d.code}", {"changed": changed})
 
 
 def init_milestones(project, user=None):

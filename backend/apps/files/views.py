@@ -74,7 +74,8 @@ def _owner_access(user, owner_type, owner_id, write=False):
         # 合同/订单扫描件可能含金额（D5）：财务可上传确认依据，但查看/下载限负责人与商务
         return can(user, "order.confirm") if write else can(user, "order.amount")
     if owner_type == "performance":
-        return can(user, "performance.write")
+        # 业绩证明文件可能含金额：读写都需金额权限（RC3：财务可补录业绩字段，但不接触证明文件）
+        return can(user, "performance.write") and can(user, "performance.see_amount")
     if owner_type == "quote":
         # 报价附件（技术方案、客户询价单等）：只与报价权限一致（D2：销售/财务/管理员一律无）
         return can(user, "quote.access")
@@ -176,7 +177,7 @@ class AttachmentDetailView(APIView):
 
         att = Attachment.objects.filter(pk=pk).first()
         # 分类与授权只允许商务/负责人，且必须对所属对象有写权限（P2：销售不能撤回他人授权、财务不能借 PATCH 探测订单附件）
-        if not att or not can(request.user, "project.edit_any") or not _owner_access(request.user, att.owner_type, att.owner_id, write=True):
+        if not att or not can(request.user, "attachment.classify") or not _owner_access(request.user, att.owner_type, att.owner_id, write=True):
             raise PermissionDenied("只有商务助理或部门负责人可以设置附件类别与销售可见")
         klass = request.data.get("klass", att.klass)
         sv = request.data.get("sales_visible", att.sales_visible)

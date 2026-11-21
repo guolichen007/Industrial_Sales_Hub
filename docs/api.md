@@ -39,7 +39,12 @@
 | GET/POST | `projects/{id}/updates/` | 同上 | 售前：LE AS SA；执行：LE AS FI | |
 | GET/POST/PATCH | `projects/{id}/milestones/…` | 同上 | LE AS FI | 延期须填原因 |
 | GET | `projects/{id}/related/` | 同上 | — | 关联报价/订单/业绩，按角色裁剪 |
-| GET/POST/PATCH | `quotations/` | LE AS | LE AS | D2：SA/FI/AD 一律 403 |
+| GET/POST/PATCH | `inquiries/` | LE AS FI | LE AS FI | RC3：询价登记（不含价格；明细中价格/金额键被拒绝）；返回关联报价编号 |
+| POST | `projects/{id}/handoff/` `projects/{id}/handoff/revert/` | — | LE AS / 仅 LE | RC3：中标确认转交（锁定销售写入）/ 撤销中标 |
+| GET/POST | `projects/{id}/tracks/` | 业务角色（SA 无 private_note） | 交付线 LE AS FI；资金线 LE FI | RC3：生产交付/资金两条状态线，不含金额 |
+| POST | `projects/{id}/tracks/{eid}/revert/` | — | 同上 | 撤销录错的状态事件（只标记不删除） |
+| GET/POST/PATCH | `stage-defs/` | 业务角色 | LE AS | RC3：阶段展示名/排序/停用；code 不可改，无删除 |
+| GET/POST/PATCH | `quotations/` | LE AS（`ISH_FINANCE_QUOTE=1` 时含 FI） | 同左 | D2：SA/AD 一律 403 |
 | POST | `quotations/{id}/status/` | — | LE AS | 试用版本不能标记已发送/已接受（409 trial_quote） |
 | POST | `quotations/{id}/revisions/` | — | LE AS | 复制最新版本为新草稿 |
 | GET/PATCH | `quote-revisions/{id}/` | LE AS | LE AS | 冻结版本修改 409；`host_qty/host_label/warranty` |

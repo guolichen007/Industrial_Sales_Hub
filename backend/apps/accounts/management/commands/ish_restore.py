@@ -218,12 +218,18 @@ class Command(BaseCommand):
         self._say(j, f"已恢复到 staging 库 {staging}")
         backup_migs = set(man.get("migrations", []))
         pending = sorted(pgops.known_migrations() - backup_migs)
+        new_tables = []
         if pending:
-            if True:
-                self._say(j, f"备份来自较旧的 schema，在 staging 库上执行 {len(pending)} 个迁移")
-                rc, out = run_manage(["migrate", "--noinput"], {"DATABASE_URL": db_url_for(staging)})
-                if rc != 0:
-                    raise CommandError("staging 库迁移失败：" + out[-800:])
+            self._say(j, f"备份来自较旧的 schema，在 staging 库上执行 {len(pending)} 个迁移")
+            before = set(pgops.psql("SELECT tablename FROM pg_tables WHERE schemaname='public'", self.pg_bin, db=staging).split())
+            rc, out = run_manage(["migrate", "--noinput"], {"DATABASE_URL": db_url_for(staging)})
+            if rc != 0:
+                raise CommandError("staging 库迁移失败：" + out[-800:])
+            after = set(pgops.psql("SELECT tablename FROM pg_tables WHERE schemaname='public'", self.pg_bin, db=staging).split())
+            # 迁移新建的表（例如 RC3 的阶段字典，迁移时写入默认数据）不属于备份内容，不参与行数比对；原有表仍逐表比对
+            new_tables = sorted(after - before)
+            j.data["staging_new_tables"] = new_tables
+            j.save()
 
         # ---- staging 文件（与正式 private 在同一目录，保证切换为同卷改名）
         j.phase("STAGE_FILES")
@@ -251,8 +257,8 @@ class Command(BaseCommand):
 
         # ---- staging 校验（独立子进程：staging 库 + staging 文件）
         j.phase("STAGE_VERIFY")
-        rc, out = run_manage(["verify_integrity", "--expect-manifest", str(bpath / "manifest.json"), "--private-dir", str(stage_dir)],
-                             {"DATABASE_URL": db_url_for(staging)})
+        rc, out = run_manage(["verify_integrity", "--expect-manifest", str(bpath / "manifest.json"), "--private-dir", str(stage_dir)]
+                             + (["--ignore-tables", ",".join(new_tables)] if new_tables else []), {"DATABASE_URL": db_url_for(staging)})
         self._say(j, out.strip()[-600:])
         if rc != 0:
             raise CommandError("staging 完整性检查失败：" + out[-800:])
@@ -284,7 +290,9 @@ class Command(BaseCommand):
         # ---- 切换后校验（新连接）
         j.phase("POST_VERIFY")
         fault("restore.post_verify")
-        rc, out = run_manage(["verify_integrity", "--expect-manifest", str(bpath / "manifest.json"), "--private-dir", str(live)], {"DATABASE_URL": db_url_for(prod)})
+        new_tables = j.data.get("staging_new_tables") or []
+        rc, out = run_manage(["verify_integrity", "--expect-manifest", str(bpath / "manifest.json"), "--private-dir", str(live)]
+                             + (["--ignore-tables", ",".join(new_tables)] if new_tables else []), {"DATABASE_URL": db_url_for(prod)})
         self._say(j, out.strip()[-400:])
         if rc != 0:
             raise CommandError("切换后完整性检查失败：" + out[-800:])

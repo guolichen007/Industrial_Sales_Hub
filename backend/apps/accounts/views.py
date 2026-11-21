@@ -20,7 +20,7 @@ from apps.audit.models import AuditEvent
 from apps.audit.service import audit
 from apps.common.errors import BusinessError
 from apps.common.params import str_param
-from apps.common.roles import ADMIN, CAP, HasCap, role_of
+from apps.common.roles import ADMIN, HasCap, effective_caps, role_of
 
 from .models import User
 
@@ -36,7 +36,7 @@ def me_payload(user):
         "name": user.name,
         "role": role,
         "role_label": user.get_role_display(),
-        "caps": sorted(k for k, roles in CAP.items() if role in roles),
+        "caps": effective_caps(role),
         "flags": {
             "performance_confirm_mode": settings.PERFORMANCE_CONFIRM_MODE,
             "project_visibility": settings.PROJECT_VISIBILITY,

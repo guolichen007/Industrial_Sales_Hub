@@ -12,7 +12,7 @@ from apps.imports import views as imports
 from apps.organizations import views as org
 from apps.performances import views as perf
 from apps.products import views as prod
-from apps.projects.views import ProjectViewSet
+from apps.projects.views import ProjectViewSet, StageDefViewSet
 from apps.quotations import views as quo
 
 router = DefaultRouter(trailing_slash=True)
@@ -25,6 +25,8 @@ router.register("product-categories", prod.CategoryViewSet, basename="category")
 router.register("parameter-definitions", prod.ParameterDefinitionViewSet, basename="paramdef")
 router.register("products", prod.ProductViewSet, basename="product")
 router.register("projects", ProjectViewSet, basename="project")
+router.register("stage-defs", StageDefViewSet, basename="stage-def")
+router.register("inquiries", quo.InquiryViewSet, basename="inquiry")
 router.register("quotations", quo.QuoteViewSet, basename="quotation")
 router.register("quote-revisions", quo.RevisionViewSet, basename="quote-revision")
 router.register("order-confirmations", OrderViewSet, basename="order")

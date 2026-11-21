@@ -136,12 +136,26 @@ class PerformanceViewSet(viewsets.ModelViewSet):
         resp["Content-Disposition"] = f"attachment; filename=\"performances.xlsx\"; filename*=UTF-8''{urlquote(fname)}"
         return resp
 
+    def _guard_fields(self, s):
+        """RC3-G0 字段级授权：无金额权限者不得写入金额/内部备注；无公开审批权者不得修改对外展示与业主名称授权。"""
+        u = self.request.user
+        if not can(u, "performance.see_amount"):
+            for f in ("internal_amount", "remark"):
+                if f in self.request.data:
+                    raise PermissionDenied(f"当前角色不能写入“{f}”（金额/内部备注仅负责人与商务）")
+        if not can(u, "performance.publish"):
+            for f in ("publishable", "public_name_authorized"):
+                if f in self.request.data:
+                    raise PermissionDenied("对外展示与业主名称授权属于公开审批，由负责人/商务设置")
+
     def perform_create(self, s):
+        self._guard_fields(s)
         # 手工补录：独立来源 + 待核实，不能绕过订单验证直接成为已确认
         o = s.save(source="MANUAL", status="PENDING", created_by=self.request.user)
         audit(self.request, "create", "performance", o.id, f"手工补录业绩 {o.title}（待核实）")
 
     def perform_update(self, s):
+        self._guard_fields(s)
         inst = Performance.objects.select_for_update().get(pk=s.instance.pk)
         if inst.status == "REVOKED":
             raise BusinessError("已撤销业绩不可修改", code="revoked")

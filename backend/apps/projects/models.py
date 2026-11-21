@@ -29,6 +29,7 @@ class Project(models.Model):
     won_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     won_note = models.CharField("中标说明", max_length=200, blank=True)
     sales_locked_at = models.DateTimeField("销售转交（锁定）时间", null=True, blank=True)
+    delivery_due_on = models.DateField("计划交付完结日期", null=True, blank=True)  # RC3-G2：交付逾期判断
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
@@ -72,9 +73,10 @@ class ProjectUpdate(models.Model):
     contact_name = models.CharField("联系对象", max_length=60, blank=True)
     next_action = models.CharField("下一步", max_length=200, blank=True)
     next_action_date = models.DateField("下次行动日期", null=True, blank=True)
-    happened_at = models.DateTimeField("发生时间")
+    public_content = models.CharField("销售可见说明（勿填金额）", max_length=300, blank=True)  # RC3-G2：内部 content 与对销售公开说明分离
+    happened_at = models.DateTimeField("发生时间")  # 业务事实发生时间（可补录）
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True)  # 系统录入时间（服务器生成，不可修改）
 
     class Meta:
         ordering = ["-happened_at", "-id"]
@@ -88,14 +90,62 @@ class ExecutionMilestone(models.Model):
     owner_name = models.CharField("责任人", max_length=40, blank=True)
     planned_date = models.DateField("预计完成", null=True, blank=True)
     actual_date = models.DateField("实际完成", null=True, blank=True)
-    note = models.CharField("说明", max_length=300, blank=True)
-    delay_reason = models.CharField("延期原因", max_length=200, blank=True)
+    note = models.CharField("内部说明", max_length=300, blank=True)
+    delay_reason = models.CharField("延期原因（内部）", max_length=200, blank=True)
+    public_note = models.CharField("销售可见说明（勿填金额）", max_length=200, blank=True)
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["sort", "id"]
         constraints = [models.UniqueConstraint(fields=["project", "stage"], name="uniq_milestone_stage")]
+
+
+TRACKS = [("DELIVERY", "生产/交付"), ("PAYMENT", "资金状态")]
+# 默认阶段（稳定 code；展示名、顺序可在“阶段配置”修改，code 永不改变；is_final 决定“完结/结清”判断）
+DEFAULT_STAGES = {
+    "DELIVERY": [("TECH_CONFIRMED", "技术资料确认", False), ("IN_PRODUCTION", "生产中", False), ("PRODUCED", "生产完成", False), ("READY_PICKUP", "待提货", False),
+                 ("SHIPPED", "已发货", False), ("ARRIVED", "已到货", False), ("COMPLETED", "已交付/完结", True)],
+    "PAYMENT": [("UNCONFIRMED", "未确认", False), ("PREPAID", "预付款已到账", False), ("BALANCE_DUE", "尾款待收/存在欠款", False), ("SETTLED", "已结清", True), ("DISPUTED", "有争议", False)],
+}
+
+
+class StageDef(models.Model):
+    """两条状态线的阶段字典（RC3-G2）。不是流程引擎：只有展示名、排序、停用；code 创建后不可修改、不可删除。"""
+
+    track = models.CharField(max_length=10, choices=TRACKS)
+    code = models.CharField(max_length=30)
+    label = models.CharField("展示名称", max_length=30)
+    sort = models.IntegerField(default=0)
+    active = models.BooleanField(default=True)
+    is_final = models.BooleanField(default=False)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["track", "sort", "id"]
+        constraints = [models.UniqueConstraint(fields=["track", "code"], name="uniq_stage_code")]
+
+
+class TrackEvent(models.Model):
+    """状态线事件（只追加；撤销=标记 reverted，不删除）。项目当前状态 = 各状态线最近一条未撤销事件。"""
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="track_events")
+    track = models.CharField(max_length=10, choices=TRACKS)
+    code = models.CharField(max_length=30)
+    label_snapshot = models.CharField("当时的展示名", max_length=30)
+    happened_on = models.DateField("发生日期")  # 业务发生日期（可补录，不晚于今天）
+    created_at = models.DateTimeField(auto_now_add=True)  # 系统记录时间（服务器生成）
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    public_note = models.CharField("销售可见说明（勿填金额）", max_length=200, blank=True)
+    private_note = models.CharField("内部说明（可含金额，仅商务/财务/负责人）", max_length=300, blank=True)
+    reverted_at = models.DateTimeField(null=True, blank=True)
+    reverted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    revert_reason = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        ordering = ["-happened_on", "-id"]
+        indexes = [models.Index(fields=["project", "track"])]
 
 
 class FinanceEntry(models.Model):

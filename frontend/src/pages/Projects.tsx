@@ -12,14 +12,15 @@ export function ProjectForm({ initial, onClose, onSaved }: { initial?: any; onCl
   const f = useForm({
     name: initial?.name || "", industry: initial?.industry || "", machine_type: initial?.machine_type || "", region: initial?.region || "",
     location: initial?.location || "", investor: initial?.investor || "", description: initial?.description || "",
-    presale_phase: initial?.presale_phase || "线索发现", sales_owner: initial?.sales_owner ?? (me!.role === "SALES" ? me!.id : ""), expected_amount_note: initial?.expected_amount_note || "",
+    presale_phase: initial?.presale_phase || "线索发现", sales_owner: initial?.sales_owner ?? (me!.role === "SALES" ? me!.id : ""), expected_amount_note: initial?.expected_amount_note || "", delivery_due_on: initial?.delivery_due_on || "",
   });
   const [busy, setBusy] = useState(false);
   const [members, setMembers] = useState<number[]>(initial?.members || []);
   const save = async () => {
     setBusy(true);
     try {
-      const body: any = { ...f.v, sales_owner: f.v.sales_owner || null };
+      const body: any = { ...f.v, sales_owner: f.v.sales_owner || null, delivery_due_on: f.v.delivery_due_on || null };
+      if (!can("delivery.write") || !initial?.sales_locked_at) delete body.delivery_due_on;
       if (can("project.edit_any")) body.members = members;
       if (!can("project.see_scale_note")) delete body.expected_amount_note;
       if (me!.role === "SALES") delete body.sales_owner;
@@ -60,6 +61,7 @@ export function ProjectForm({ initial, onClose, onSaved }: { initial?: any; onCl
           </Field>
         )}
         {can("project.see_scale_note") && <Field label="预计规模（内部，仅商务/负责人可见）"><input className="input" {...f.bind("expected_amount_note")} /></Field>}
+        {can("delivery.write") && initial?.sales_locked_at && <Field label="计划交付完结日期（逾期提醒）"><input className="input" type="date" {...f.bind("delivery_due_on")} /></Field>}
         <Field label="项目说明" full><textarea className="input textarea" {...f.bind("description")} /></Field>
       </div>
     </Modal>

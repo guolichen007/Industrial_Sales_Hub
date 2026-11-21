@@ -67,7 +67,36 @@ CAP = {
     "import.run": {LEADER, ASSISTANT},
     # ---- 已关闭能力（D5）：独立财务台账。保留键以便代码明确拒绝 ----
     "project_finance.access": set(),
+    # ---- RC3：询价登记（客户来询，不含价格）与业务能力拆分 ----
+    "inquiry.read": {LEADER, ASSISTANT},
+    "inquiry.write": {LEADER, ASSISTANT},
+    "performance.publish": {LEADER, ASSISTANT},  # 修改“允许对外展示/业主名称授权”（公开审批相关），财务不可
+    "delivery.write": {LEADER, ASSISTANT},  # 生产/交付状态线
+    "payment.write": {LEADER, FINANCE},  # 资金状态线（仅状态枚举，不含金额）
+    "stage.config": {LEADER, ASSISTANT},  # 阶段展示名/排序/停用
+    "attachment.classify": {LEADER, ASSISTANT},  # 附件类别与“销售可见”授权（财务不获得，即使 BUSINESS 口径）
 }
+
+# RC3-G0 业务口径（docs/RC3-业务角色与字段矩阵.md）：财务纳入商务板块。
+#   ISH_FINANCE_SCOPE=BUSINESS（默认）：财务可建/改项目资料、登记询价、录入/更新业绩（不含金额与公开授权）、维护交付与资金状态；
+#                    RC2：恢复 V2.1 D5（财务只做合同确认与执行节点）。
+#   ISH_FINANCE_QUOTE=1：财务可进入报价中心（含单价/金额）。默认 0——“财务是否可见报价价格”需甲方书面确认后再开。
+#   任何口径下：销售无报价/价格/合同金额；财务不能审批业绩、不能签收模板、不能看“预计规模”自由文本、不能撤销中标。
+FINANCE_BUSINESS_CAPS = {"project.create", "project.edit", "project.edit_any", "inquiry.read", "inquiry.write", "performance.write", "delivery.write", "milestone.init"}
+FINANCE_QUOTE_CAPS = {"quote.access", "order.amount", "performance.see_amount"}
+
+
+def effective_roles(cap):
+    roles = set(CAP[cap])
+    if getattr(settings, "FINANCE_SCOPE", "BUSINESS") == "BUSINESS" and cap in FINANCE_BUSINESS_CAPS:
+        roles.add(FINANCE)
+    if getattr(settings, "FINANCE_QUOTE", False) and cap in FINANCE_QUOTE_CAPS:
+        roles.add(FINANCE)
+    return roles
+
+
+def effective_caps(role):
+    return sorted(k for k in CAP if role in effective_roles(k))
 
 
 def role_of(user):
@@ -75,7 +104,7 @@ def role_of(user):
 
 
 def can(user, cap):
-    return role_of(user) in CAP[cap]
+    return role_of(user) in effective_roles(cap)
 
 
 def sales_project_scope_own():

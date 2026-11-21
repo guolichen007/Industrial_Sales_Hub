@@ -308,7 +308,12 @@ def test_request_id_header_sanitized(client_for):
 # ======================= 执行节点 =======================
 def test_milestones_only_after_order(client_for, base):
     pid = base["p_sales"].id
-    assert client_for("finance").post(f"/api/projects/{pid}/milestones/").status_code == 403
+    # RC3-G0：BUSINESS 口径下财务也可补建执行节点（仍须有已确认订单，见下一行 409）；RC2 口径 403
+    from django.test import override_settings
+
+    with override_settings(FINANCE_SCOPE="RC2"):
+        assert client_for("finance").post(f"/api/projects/{pid}/milestones/").status_code == 403
+    assert client_for("finance").post(f"/api/projects/{pid}/milestones/").status_code == 409
     r = client_for("assistant").post(f"/api/projects/{pid}/milestones/")
     assert r.status_code == 409 and r.json()["code"] == "no_order"
     confirm(client_for, base, ref="M-1")
@@ -326,8 +331,11 @@ def test_milestone_validation_and_delay_reason(client_for, base):
     assert c.patch(f"/api/projects/{pid}/milestones/{mid}/", {"state": "DONE", "actual_date": "2099-01-01"}, format="json").status_code == 400
     r = c.patch(f"/api/projects/{pid}/milestones/{mid}/", {"state": "DELAYED", "delay_reason": "厂家排产推迟", "planned_date": "2026-12-20", "owner_name": "张三"}, format="json")
     assert r.status_code == 200 and r.json()["delay_reason"] == "厂家排产推迟"
+    # RC3-T24 行为调整：延期原因属于内部说明（可能含金额/客户欠款），不再原样给销售；销售只看到节点状态与“销售可见说明”
     upd = client_for("sales").get(f"/api/projects/{pid}/updates/?stream=EXECUTION").json()
-    assert any("厂家排产推迟" in u["content"] for u in upd)
+    assert any("发货" in u["title"] and "延期" in u["title"] for u in upd)
+    assert not any("厂家排产推迟" in u["content"] for u in upd)
+    assert any("厂家排产推迟" in u["content"] for u in client_for("assistant").get(f"/api/projects/{pid}/updates/?stream=EXECUTION").json())
 
 
 def test_revoke_last_order_pauses_and_other_orders_keep_execution(client_for, base):

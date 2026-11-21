@@ -14,19 +14,31 @@ import Execution from "./pages/Execution";
 import Performance from "./pages/Performance";
 import Cases from "./pages/Cases";
 import Settings from "./pages/Settings";
+import Inquiries from "./pages/Inquiries";
 
 type NavItem = { to: string; label: string; glyph: string; cap?: string };
-const NAV: NavItem[] = [
+// RC3-G0：首层只有两个业务工作区（商务 / 销售）；同一页面按角色能力出现在对应工作区，技术设置放在页尾
+const BUSINESS_NAV: NavItem[] = [
   { to: "/", label: "工作台", glyph: "◈" },
-  { to: "/projects", label: "项目中心", glyph: "▦", cap: "project.read" },
-  { to: "/customers", label: "客户资料库", glyph: "♧", cap: "project.read" },
-  { to: "/products", label: "产品型号库", glyph: "▤", cap: "product.write" },
+  { to: "/inquiries", label: "询价登记", glyph: "✉", cap: "inquiry.read" },
   { to: "/quotes", label: "报价中心", glyph: "▣", cap: "quote.access" },
-  { to: "/execution", label: "项目执行", glyph: "◷", cap: "project.read" },
-  { to: "/performance", label: "业绩台账", glyph: "▥", cap: "performance.read" },
-  { to: "/cases", label: "对外案例", glyph: "▧", cap: "case.read" },
-  { to: "/settings", label: "系统设置", glyph: "⚙" },
+  { to: "/projects", label: "项目台账", glyph: "▦", cap: "project.edit_any" },
+  { to: "/execution", label: "交付与回款进度", glyph: "◷", cap: "delivery.write" },
+  { to: "/performance", label: "业绩台账", glyph: "▥", cap: "performance.write" },
+  { to: "/customers", label: "客户资料库", glyph: "♧", cap: "project.edit_any" },
+  { to: "/products", label: "产品型号库", glyph: "▤", cap: "product.write" },
+  { to: "/cases", label: "对外案例", glyph: "▧", cap: "case.withdraw" },
 ];
+const SALES_NAV: NavItem[] = [
+  { to: "/", label: "工作台", glyph: "◈" },
+  { to: "/projects", label: "售前项目", glyph: "▦", cap: "project.read" },
+  { to: "/execution", label: "项目进度查询", glyph: "◷", cap: "project.read" },
+  { to: "/customers", label: "客户资料库", glyph: "♧", cap: "project.read" },
+  { to: "/performance", label: "我的业绩", glyph: "▥", cap: "performance.read" },
+  { to: "/cases", label: "对外案例", glyph: "▧", cap: "case.read" },
+];
+const TECH_NAV: NavItem[] = [{ to: "/settings", label: "系统设置", glyph: "⚙" }];
+const NAV: NavItem[] = [...BUSINESS_NAV, ...SALES_NAV, ...TECH_NAV];
 
 function ConnBadge() {
   const [c, setC] = useState({ online: true, maintenance: false, checkedAt: 0 });
@@ -114,15 +126,28 @@ export default function App() {
             <small>SALES HUB V2</small>
           </div>
         </div>
-        <div className="aside-title">业务导航</div>
-        <nav className="nav">
-          {NAV.filter((n) => !n.cap || can(n.cap)).map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.to === "/"} className={({ isActive }) => "navitem" + (isActive ? " active" : "")}>
+        {(() => {
+          // 商务工作区：负责人/商务/财务（有询价或项目全量编辑能力）；销售工作区：销售；管理员只有技术设置
+          const board = me.role === "SALES" ? { title: "销售工作区", items: SALES_NAV } : me.role === "ADMIN" ? { title: "技术管理", items: [] as NavItem[] } : { title: "商务工作区", items: BUSINESS_NAV };
+          const items = board.items.filter((n) => !n.cap || can(n.cap));
+          const link = (n: NavItem) => (
+            <NavLink key={n.to + n.label} to={n.to} end={n.to === "/"} className={({ isActive }) => "navitem" + (isActive ? " active" : "")}>
               <span className="glyph">{n.glyph}</span>
               <span className="text">{n.label}</span>
             </NavLink>
-          ))}
-        </nav>
+          );
+          return (
+            <>
+              <div className="aside-title">{board.title}</div>
+              <nav className="nav">
+                {items.map(link)}
+                {me.role === "ADMIN" && link({ to: "/", label: "工作台", glyph: "◈" })}
+              </nav>
+              <div className="aside-title">技术设置</div>
+              <nav className="nav">{TECH_NAV.map(link)}</nav>
+            </>
+          );
+        })()}
         <div className="sidebar-bottom">
           <ConnBadge />
           <div>{me.name} · {me.role_label}</div>
@@ -147,6 +172,7 @@ export default function App() {
             <Route path="/projects/:id" element={<Guard cap="project.read"><ProjectDetail /></Guard>} />
             <Route path="/customers" element={<Guard cap="project.read"><Customers /></Guard>} />
             <Route path="/products" element={<Guard cap="product.write"><Products /></Guard>} />
+            <Route path="/inquiries" element={<Guard cap="inquiry.read"><Inquiries /></Guard>} />
             <Route path="/quotes" element={<Guard cap="quote.access"><Quotes /></Guard>} />
             <Route path="/quotes/:id" element={<Guard cap="quote.access"><QuoteEditor /></Guard>} />
             <Route path="/execution" element={<Guard cap="project.read"><Execution /></Guard>} />

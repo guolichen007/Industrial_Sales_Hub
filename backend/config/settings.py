@@ -239,6 +239,10 @@ REST_FRAMEWORK = {
 PERFORMANCE_CONFIRM_MODE = os.environ.get("PERFORMANCE_CONFIRM_MODE", "OR").strip().upper()  # D3
 if PERFORMANCE_CONFIRM_MODE not in {"OR", "AND"}:
     raise ConfigError("PERFORMANCE_CONFIRM_MODE 只能是 OR / AND")
+FINANCE_SCOPE = os.environ.get("ISH_FINANCE_SCOPE", "BUSINESS").strip().upper()  # RC3-G0
+if FINANCE_SCOPE not in {"BUSINESS", "RC2"}:
+    raise ConfigError("ISH_FINANCE_SCOPE 只能是 BUSINESS / RC2")
+FINANCE_QUOTE = env_bool("ISH_FINANCE_QUOTE", False)  # RC3-G0：财务可见报价价格（待甲方书面确认）
 PROJECT_VISIBILITY = os.environ.get("ISH_PROJECT_VISIBILITY", "ALL").strip().upper()  # D7
 if PROJECT_VISIBILITY not in {"ALL", "OWN"}:
     raise ConfigError("ISH_PROJECT_VISIBILITY 只能是 ALL / OWN")

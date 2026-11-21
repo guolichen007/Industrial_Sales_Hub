@@ -20,8 +20,9 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--expect-manifest", default=None)
         parser.add_argument("--private-dir", default=None, help="在指定私有目录（例如恢复 staging 目录）上校验文件")
+        parser.add_argument("--ignore-tables", default="", help="不参与行数比对的数据库表（逗号分隔；仅限迁移新建的表）")
 
-    def handle(self, *args, expect_manifest=None, private_dir=None, **kw):
+    def handle(self, *args, expect_manifest=None, private_dir=None, ignore_tables="", **kw):
         from pathlib import Path
 
         from django.conf import settings
@@ -71,7 +72,13 @@ class Command(BaseCommand):
 
             man = json.loads(open(expect_manifest, encoding="utf-8").read())
             now = table_counts()
+            from django.apps import apps as _apps
+
+            skip_tables = {t.strip() for t in (ignore_tables or "").split(",") if t.strip()}
+            skip_labels = {m._meta.label for m in _apps.get_models() if m._meta.db_table in skip_tables}
             for label, n in man.get("table_counts", {}).items():
+                if label in skip_labels:
+                    continue
                 if now.get(label) != n:
                     errors.append(f"表行数与备份清单不一致：{label} 期望 {n} 实际 {now.get(label)}")
             # 私有目录必须与备份清单逐文件一致（不多不少，哈希相同）

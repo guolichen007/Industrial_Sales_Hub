@@ -43,10 +43,10 @@ function PartyModal({ projectId, onClose, onSaved }: { projectId: number; onClos
 
 function UpdateModal({ projectId, stream, onClose, onSaved }: { projectId: number; stream: "PRESALE" | "EXECUTION"; onClose: () => void; onSaved: () => void }) {
   const { notify, fail } = useToast();
-  const f = useForm({ title: "", content: "", phase: "", contact_name: "", next_action: "", next_action_date: "" });
+  const f = useForm({ title: "", content: "", public_content: "", phase: "", contact_name: "", next_action: "", next_action_date: "", happened_at: "" });
   const save = async () => {
     try {
-      await post(`/projects/${projectId}/updates/`, { ...f.v, stream, next_action_date: f.v.next_action_date || null });
+      await post(`/projects/${projectId}/updates/`, { ...f.v, stream, next_action_date: f.v.next_action_date || null, happened_at: f.v.happened_at || undefined });
       notify("进展已记录");
       onSaved();
     } catch (e) {
@@ -65,7 +65,9 @@ function UpdateModal({ projectId, stream, onClose, onSaved }: { projectId: numbe
           </Field>
         )}
         <Field label="联系对象"><input className="input" {...f.bind("contact_name")} /></Field>
-        <Field label="内容" full><textarea className="input textarea" {...f.bind("content")} /></Field>
+        <Field label="发生时间（可补录）" hint="系统录入时间由服务器自动记录"><input className="input" type="datetime-local" {...f.bind("happened_at")} /></Field>
+        <Field label={stream === "EXECUTION" ? "内部内容（可含金额，销售不可见）" : "内容"} full><textarea className="input textarea" {...f.bind("content")} /></Field>
+        {stream === "EXECUTION" && <Field label="销售可见说明（勿填金额）" full><input className="input" {...f.bind("public_content")} /></Field>}
         <Field label="下一步行动"><input className="input" {...f.bind("next_action")} /></Field>
         <Field label="下次行动日期"><input className="input" type="date" {...f.bind("next_action_date")} /></Field>
       </div>
@@ -73,10 +75,82 @@ function UpdateModal({ projectId, stream, onClose, onSaved }: { projectId: numbe
   );
 }
 
+function TrackPanel({ p, onChanged }: { p: any; onChanged: () => void }) {
+  const { can } = useAuth();
+  const { notify, fail } = useToast();
+  const [stages] = useLoad(() => get<any[]>("/stage-defs/"), []);
+  const [hist, setHist] = useState<any[] | null>(null);
+  const [form, setForm] = useState<any>(null);
+  const won = !!p.sales_locked_at;
+  const t = p.tracks || {};
+  const canTrack = (tr: string) => won && can(tr === "DELIVERY" ? "delivery.write" : "payment.write");
+  const record = async () => {
+    try {
+      await post(`/projects/${p.id}/tracks/`, form);
+      notify("状态已记录");
+      setForm(null);
+      setHist(null);
+      onChanged();
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const revert = async (ev: any) => {
+    const reason = prompt(`撤销“${ev.label}”记录的原因（必填）：`);
+    if (!reason) return;
+    try {
+      await post(`/projects/${p.id}/tracks/${ev.id}/revert/`, { reason });
+      setHist(null);
+      onChanged();
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const cell = (tr: string, x: any) => (
+    <div className="choice" style={{ flex: 1 }}>
+      <h3>{tr === "DELIVERY" ? "生产/交付" : "资金状态"}</h3>
+      {x ? <><Chip s={x.label} cls={x.is_final ? "" : "blue"} /><div className="micro" style={{ marginTop: 6 }}>发生：{dt(x.happened_on)} ｜ 记录：{x.created_by_name} {dt(x.created_at, true)}</div>
+        {x.public_note && <div className="sub">{x.public_note}</div>}{x.private_note && <div className="micro" style={{ color: "#8a5a12" }}>内部：{x.private_note}</div>}</> : <div className="sub">尚无记录</div>}
+      {canTrack(tr) && <button className="btn mini soft" style={{ marginTop: 6 }} onClick={() => setForm({ track: tr, code: "", happened_on: new Date().toISOString().slice(0, 10), public_note: "", private_note: "" })}>+ 记录{tr === "DELIVERY" ? "交付" : "资金"}状态</button>}
+    </div>
+  );
+  return (
+    <div className="card cardpad">
+      <div className="sectionhead"><h2>交付与资金状态</h2><small>两条状态线互不覆盖 · 不含任何金额{t.delivery_overdue && <b style={{ color: "#b55c5c" }}> · 交付已逾期</b>}</small></div>
+      {!won ? <div className="sub">中标确认/转交商务后开始记录。</div> : <div className="rowactions" style={{ alignItems: "stretch" }}>{cell("DELIVERY", t.delivery)}{cell("PAYMENT", t.payment)}</div>}
+      {won && <button className="btn mini" style={{ marginTop: 8 }} onClick={() => get<any>(`/projects/${p.id}/tracks/`).then((d) => setHist(d.events)).catch(fail)}>状态历史</button>}
+      {hist && (
+        <div className="tablewrap" style={{ marginTop: 8 }}>
+          <table className="data"><thead><tr><th>状态线</th><th>阶段</th><th>发生日期</th><th>记录人 / 系统时间</th><th>说明</th><th /></tr></thead>
+            <tbody>{hist.map((ev) => (
+              <tr key={ev.id} style={ev.reverted_at ? { textDecoration: "line-through", opacity: 0.6 } : undefined}>
+                <td>{ev.track === "DELIVERY" ? "交付" : "资金"}</td><td>{ev.label}</td><td>{dt(ev.happened_on)}</td><td className="micro">{ev.created_by_name} {dt(ev.created_at, true)}</td>
+                <td className="micro">{ev.public_note}{ev.private_note && <div>内部：{ev.private_note}</div>}{ev.reverted_at && <div>已撤销：{ev.reverted_by_name} {ev.revert_reason || ""}</div>}</td>
+                <td>{!ev.reverted_at && canTrack(ev.track) && <button className="btn mini" onClick={() => revert(ev)}>撤销</button>}</td>
+              </tr>
+            ))}{hist.length === 0 && <tr><td colSpan={6} className="empty-cell">暂无</td></tr>}</tbody></table>
+        </div>
+      )}
+      {form && (
+        <Modal title={form.track === "DELIVERY" ? "记录生产/交付状态" : "记录资金状态（只记状态，不记金额）"} onClose={() => setForm(null)}
+          foot={<><button className="btn" onClick={() => setForm(null)}>取消</button><button className="btn primary" disabled={!form.code} onClick={record}>保存</button></>}>
+          <div className="fieldset">
+            <Field label="阶段 *"><select className="select" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })}><option value="">请选择</option>
+              {(stages || []).filter((d) => d.track === form.track && d.active).map((d) => <option key={d.code} value={d.code}>{d.label}</option>)}</select></Field>
+            <Field label="发生日期"><input className="input" type="date" value={form.happened_on} onChange={(e) => setForm({ ...form, happened_on: e.target.value })} /></Field>
+            <Field label="销售可见说明（勿填金额）" full><input className="input" value={form.public_note} onChange={(e) => setForm({ ...form, public_note: e.target.value })} /></Field>
+            <Field label="内部说明（销售不可见）" full><input className="input" value={form.private_note} onChange={(e) => setForm({ ...form, private_note: e.target.value })} /></Field>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function MilestoneRow({ m, projectId, editable, onSaved }: { m: any; projectId: number; editable: boolean; onSaved: () => void }) {
   const { notify, fail } = useToast();
   const [edit, setEdit] = useState(false);
-  const [v, setV] = useState({ state: m.state, owner_name: m.owner_name, planned_date: m.planned_date || "", actual_date: m.actual_date || "", note: m.note, delay_reason: m.delay_reason || "" });
+  const [v, setV] = useState({ state: m.state, owner_name: m.owner_name, planned_date: m.planned_date || "", actual_date: m.actual_date || "", note: m.note || "", delay_reason: m.delay_reason || "", public_note: m.public_note || "" });
   const save = async () => {
     try {
       await patch(`/projects/${projectId}/milestones/${m.id}/`, { ...v, planned_date: v.planned_date || null, actual_date: v.actual_date || null });
@@ -95,7 +169,7 @@ function MilestoneRow({ m, projectId, editable, onSaved }: { m: any; projectId: 
         <td>{m.owner_name || "—"}</td>
         <td>{dt(m.planned_date)}</td>
         <td>{dt(m.actual_date)}</td>
-        <td style={{ whiteSpace: "normal" }} className="micro">{m.state === "DELAYED" && m.delay_reason && <div style={{ color: "#b55c5c" }}>延期：{m.delay_reason}</div>}{m.note || ""}{m.updated_by_name && <div>更新：{m.updated_by_name}</div>}</td>
+        <td style={{ whiteSpace: "normal" }} className="micro">{m.state === "DELAYED" && m.delay_reason && <div style={{ color: "#b55c5c" }}>延期（内部）：{m.delay_reason}</div>}{m.note && <div>内部：{m.note}</div>}{m.public_note && <div>{m.public_note}</div>}{m.updated_by_name && <div>更新：{m.updated_by_name} {dt(m.updated_at, true)}</div>}</td>
         <td>{editable && <button className="btn mini" onClick={() => setEdit(true)}>更新</button>}</td>
       </tr>
     );
@@ -108,7 +182,8 @@ function MilestoneRow({ m, projectId, editable, onSaved }: { m: any; projectId: 
       <td><input className="ms-select" type="date" value={v.actual_date} onChange={(e) => setV({ ...v, actual_date: e.target.value })} /></td>
       <td>
         {v.state === "DELAYED" && <input className="ms-select" style={{ width: 180, marginBottom: 4, borderColor: "#e3a9a3" }} value={v.delay_reason} onChange={(e) => setV({ ...v, delay_reason: e.target.value })} placeholder="延期原因（必填）" />}
-        <input className="ms-select" style={{ width: 180 }} value={v.note} onChange={(e) => setV({ ...v, note: e.target.value })} placeholder="说明（销售可见，勿填金额）" />
+        <input className="ms-select" style={{ width: 180, marginBottom: 4 }} value={v.note} onChange={(e) => setV({ ...v, note: e.target.value })} placeholder="内部说明（销售不可见）" />
+        <input className="ms-select" style={{ width: 180 }} value={v.public_note} onChange={(e) => setV({ ...v, public_note: e.target.value })} placeholder="销售可见说明（勿填金额）" />
       </td>
       <td className="rowactions"><button className="btn mini primary" disabled={v.state === "DELAYED" && !v.delay_reason.trim()} onClick={save}>保存</button><button className="btn mini" onClick={() => setEdit(false)}>取消</button></td>
     </tr>
@@ -236,8 +311,9 @@ export default function ProjectDetail() {
                 </div>
               )}
             </div>
+            <TrackPanel p={p} onChanged={refresh} />
             <div className="card cardpad">
-              <div className="sectionhead"><h2>执行进度</h2><small>{canExec ? "商务/财务维护" : "只读 · 安全摘要"}</small></div>
+              <div className="sectionhead"><h2>执行节点（兼容 RC2）</h2><small>{canExec ? "商务/财务维护" : "只读 · 安全摘要"}</small></div>
               {p.milestones.length === 0 ? <div className="sub">合同/订单确认后自动生成执行节点。</div> : (
                 <div className="progress-rail">
                   {p.milestones.map((m: any) => <div key={m.id} className={"progress-tile " + (m.state === "DONE" ? "done" : m.state === "IN_PROGRESS" || m.state === "DELAYED" ? "current" : "")}>{m.stage}<br />{msLabel(m.state)}</div>)}

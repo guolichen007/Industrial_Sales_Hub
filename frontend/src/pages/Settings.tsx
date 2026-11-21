@@ -224,6 +224,55 @@ function ChangePassword() {
   );
 }
 
+function StageConfig() {
+  const { can } = useAuth();
+  const { notify, fail } = useToast();
+  const [list, reload] = useLoad(() => get<any[]>("/stage-defs/"), []);
+  const edit = can("stage.config");
+  const save = async (d: any, body: any) => {
+    try {
+      await patch(`/stage-defs/${d.id}/`, body);
+      notify("已保存（历史记录不受影响）");
+      reload();
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const add = async (track: string) => {
+    const label = prompt("新阶段展示名称：");
+    if (!label) return;
+    const code = prompt("阶段代码（大写字母/数字/下划线，创建后不可修改），例如 QC_CHECK：");
+    if (!code) return;
+    try {
+      await post("/stage-defs/", { track, code, label, sort: 999 });
+      reload();
+    } catch (e) {
+      fail(e);
+    }
+  };
+  return (
+    <div className="card cardpad">
+      <div className="sectionhead"><h2>交付/资金阶段配置</h2><small>只改展示名称、顺序与停用；阶段代码不变，已用过的阶段不能删除</small></div>
+      {["DELIVERY", "PAYMENT"].map((tr) => (
+        <div key={tr} style={{ marginBottom: 12 }}>
+          <div className="sectionhead"><h2 style={{ fontSize: 14 }}>{tr === "DELIVERY" ? "生产/交付" : "资金状态"}</h2>{edit && <button className="btn mini soft" onClick={() => add(tr)}>+ 新增阶段</button>}</div>
+          <div className="tablewrap"><table className="data"><thead><tr><th>顺序</th><th>代码</th><th>展示名称</th><th>完结</th><th>状态</th><th>最后修改</th></tr></thead>
+            <tbody>{(list || []).filter((d) => d.track === tr).map((d) => (
+              <tr key={d.id}>
+                <td>{edit ? <input className="input" style={{ width: 64 }} defaultValue={d.sort} onBlur={(e) => e.target.value !== String(d.sort) && save(d, { sort: e.target.value })} /> : d.sort}</td>
+                <td className="micro">{d.code}{d.used && " · 已使用"}</td>
+                <td>{edit ? <input className="input" defaultValue={d.label} onBlur={(e) => e.target.value !== d.label && save(d, { label: e.target.value })} /> : d.label}</td>
+                <td>{d.is_final ? "是" : ""}</td>
+                <td>{edit ? <button className="btn mini" onClick={() => save(d, { active: !d.active })}>{d.active ? "启用中（点击停用）" : "已停用（点击启用）"}</button> : d.active ? "启用" : "停用"}</td>
+                <td className="micro">{d.updated_by_name} {dt(d.updated_at, true)}</td>
+              </tr>
+            ))}</tbody></table></div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function Settings() {
   const { me, can } = useAuth();
   const [users, reloadUsers] = useLoad(() => (can("user.manage") ? get<any[]>("/users/") : Promise.resolve([])), []);
@@ -256,6 +305,7 @@ export default function Settings() {
             </div>
           </div>
         )}
+        {can("project.read") && <StageConfig />}
         <div className="card cardpad">
           <div className="sectionhead"><h2>报价出具主体（三公司固定模板）</h2><small>数据共享，仅模板与抬头区分</small></div>
           <div className="grid cols3">

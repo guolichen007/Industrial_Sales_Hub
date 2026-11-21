@@ -22,6 +22,7 @@ class Quote(models.Model):
     recipient_contact = models.ForeignKey("organizations.Contact", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     legal_entity = models.ForeignKey("organizations.LegalEntity", on_delete=models.PROTECT, related_name="quotes")
     title = models.CharField("报价标题", max_length=150, blank=True)
+    inquiry = models.ForeignKey("quotations.Inquiry", null=True, blank=True, on_delete=models.SET_NULL, related_name="quotes")
     status = models.CharField(max_length=10, choices=QUOTE_STATUSES, default="DRAFT")
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -106,3 +107,28 @@ class QuoteLine(models.Model):
 
     class Meta:
         ordering = ["sort", "id"]
+
+
+class Inquiry(models.Model):
+    """项目询价登记（RC3-G0）：客户/主机厂发来的询价资料，**不含任何价格**。
+
+    与“对外报价单”（Quote）是不同对象：一条询价可对应 0..n 份报价（Quote.inquiry）。
+    若甲方确认“询价单”只是报价单的叫法，本表可不使用（导航仍以报价中心为准），不影响报价。"""
+
+    STATUS = [("OPEN", "待报价"), ("QUOTED", "已报价"), ("CLOSED", "已关闭")]
+    code = models.CharField("询价编号", max_length=30, unique=True)
+    project = models.ForeignKey("projects.Project", on_delete=models.PROTECT, related_name="inquiries")
+    inquirer = models.ForeignKey("organizations.Account", null=True, blank=True, on_delete=models.PROTECT, related_name="inquiries")
+    inquirer_contact = models.CharField("询价联系人", max_length=60, blank=True)
+    received_on = models.DateField("收到日期")
+    due_on = models.DateField("要求回复日期", null=True, blank=True)
+    requirement = models.TextField("需求说明（产品、规格、数量，不含价格）", blank=True)
+    items = models.JSONField("产品明细（型号/名称/数量/单位）", default=list, blank=True)
+    status = models.CharField(max_length=8, choices=STATUS, default="OPEN")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-received_on", "-id"]
