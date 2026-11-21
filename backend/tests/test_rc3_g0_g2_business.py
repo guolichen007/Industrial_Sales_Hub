@@ -232,3 +232,15 @@ def test_sales_own_presale_text_still_visible(client_for, base):
     client_for("sales").post(f"/api/projects/{pid}/updates/", {"stream": "PRESALE", "title": "拜访", "content": "客户关注交期"}, format="json")
     assert "客户关注交期" in client_for("sales").get(f"/api/projects/{pid}/updates/").content.decode()
     assert "客户关注交期" not in client_for("sales2").get(f"/api/projects/{pid}/updates/").content.decode()  # 他人只看公开说明
+
+
+def test_payment_private_note_not_leaked_via_updates_feed(client_for, base):
+    """资金线内部说明只给有 payment.write 的角色；不能经执行进展流被商务读到（复审发现）。"""
+    pid = _won(base, client_for)
+    client_for("finance").post(f"/api/projects/{pid}/tracks/", {"track": "PAYMENT", "code": "PREPAID", "public_note": "预付款已到账", "private_note": "到账 36 万"}, format="json")
+    a = client_for("assistant")
+    for url in (f"/api/projects/{pid}/updates/", f"/api/projects/{pid}/", f"/api/projects/{pid}/tracks/", f"/api/projects/{pid}/activity/"):
+        assert "36 万" not in a.get(url).content.decode(), url
+    assert "预付款已到账" in a.get(f"/api/projects/{pid}/updates/").content.decode()
+    assert "36 万" in client_for("finance").get(f"/api/projects/{pid}/tracks/").content.decode()
+    assert "36 万" in client_for("leader").get(f"/api/projects/{pid}/tracks/").content.decode()

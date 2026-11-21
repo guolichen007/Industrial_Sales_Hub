@@ -480,7 +480,9 @@ class ProjectViewSet(viewsets.ModelViewSet):
         project.updated_by = request.user
         project.save(update_fields=["updated_by", "updated_at"])
         ProjectUpdate.objects.create(project=project, stream=ProjectUpdate.EXECUTION, title=f"{'生产/交付' if track == 'DELIVERY' else '资金状态'}：{d.label}",
-                                     content=ev.private_note, public_content=ev.public_note, phase=code, happened_at=timezone.now(), created_by=request.user)
+                                     # 进展流只带公开说明：内部说明只保存在 TrackEvent，由 track_summary/TrackEventSerializer 按写权限裁剪
+                                     # （否则商务可经进展流读到资金线内部说明）
+                                     content=ev.public_note, public_content=ev.public_note, phase=code, happened_at=timezone.now(), created_by=request.user)
         audit(request, "track_event", "project", project.id, f"{track} → {code}（{d.label}）", {"event_id": ev.id, "happened_on": str(ev.happened_on)})
         return Response({"summary": track_summary(project, request.user), "event": TrackEventSerializer(ev, context={"request": request}).data}, status=201)
 
