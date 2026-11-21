@@ -123,15 +123,48 @@ function Wait-Db([int]$port, [int]$seconds = 60) {
     return $false
 }
 
-function Get-LanAddresses {
-    $ips = @()
+# RC3-G5：应用防火墙规则只用“确切名称”，安装/卸载只删除本程序创建的规则；手工建立的 HTTPS 443 等规则不受影响
+$script:AppFwRulePrefix = 'Industrial Sales Hub App (TCP '
+function Get-AppFirewallRules {
+    # 只匹配本程序创建的应用端口规则（新名称 + RC1/RC2 旧名称“Industrial Sales Hub (TCP <端口>)”），不匹配 HTTPS 代理规则
+    return @(Get-NetFirewallRule -DisplayName 'Industrial Sales Hub*' -ErrorAction SilentlyContinue | Where-Object {
+            $_.DisplayName.StartsWith($script:AppFwRulePrefix) -or $_.DisplayName -match '^Industrial Sales Hub \(TCP \d+\)$' })
+}
+
+function Select-LanAddress([object[]]$cands) {
+    # 纯函数（便于测试）：$cands 为 @{ IP; Alias; Gateway; Virtual } 列表。优先：有默认网关的实体网卡 → 无网关的实体网卡 → 其余
+    $ranked = @($cands | Sort-Object @{ Expression = { if ($_.Gateway -and -not $_.Virtual) { 0 } elseif (-not $_.Virtual) { 1 } else { 2 } } }, @{ Expression = { $_.Alias } })
+    return @($ranked | ForEach-Object { $_.IP })
+}
+
+function Get-LanCandidates {
+    $out = @()
     try {
-        $ips = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
-            Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' -and $_.PrefixOrigin -ne 'WellKnown' } |
-            Select-Object -ExpandProperty IPAddress
+        $cfgs = Get-NetIPConfiguration -ErrorAction Stop
+        foreach ($c in $cfgs) {
+            $virtual = $false
+            $desc = "$($c.InterfaceDescription) $($c.InterfaceAlias)"
+            if ($desc -match 'Hyper-V|vEthernet|VirtualBox|VMware|TAP|Tunnel|VPN|WireGuard|ZeroTier|Tailscale|Loopback|Bluetooth|WSL') { $virtual = $true }
+            foreach ($a in @($c.IPv4Address)) {
+                if (-not $a) { continue }
+                $ip = $a.IPAddress
+                if ($ip -like '127.*' -or $ip -like '169.254.*') { continue }
+                $out += [pscustomobject]@{ IP = $ip; Alias = $c.InterfaceAlias; Gateway = [bool]$c.IPv4DefaultGateway; Virtual = $virtual }
+            }
+        }
     } catch {
-        $ips = [System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) | Where-Object { $_.AddressFamily -eq 'InterNetwork' -and -not $_.ToString().StartsWith('127.') } | ForEach-Object { $_.ToString() }
+        foreach ($ip in [System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) | Where-Object { $_.AddressFamily -eq 'InterNetwork' -and -not $_.ToString().StartsWith('127.') }) {
+            $out += [pscustomobject]@{ IP = $ip.ToString(); Alias = '?'; Gateway = $false; Virtual = $false }
+        }
     }
+    return @($out)
+}
+
+function Get-LanAddresses {
+    # 首个地址 = 推荐给员工使用的地址（默认路由所在的实体网卡）；config\app.env 的 ISH_PREFERRED_IP 可人工指定
+    $pref = (Read-AppEnv)['ISH_PREFERRED_IP']
+    $ips = Select-LanAddress (Get-LanCandidates)
+    if ($pref) { $ips = @($pref) + @($ips | Where-Object { $_ -ne $pref }) }
     return @($ips)
 }
 

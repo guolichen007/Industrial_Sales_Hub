@@ -113,6 +113,13 @@ jobs:
             if ($e.Count) { $errs++; $e | ForEach-Object { Write-Host "$($_.Extent.File):$($_.Extent.StartLineNumber) $($_.Message)" } }
           }
           if ($errs) { exit 1 }
+      - name: RC3 PowerShell 单元测试（Windows PowerShell 5.1 真实执行，防火墙规则/多网卡选择）
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windows/tests/unit-rc3.ps1
+          if ($LASTEXITCODE) { exit 1 }
+          powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windows/tests/unit-rc3-vc.ps1
+          if ($LASTEXITCODE) { exit 1 }
       - name: PSScriptAnalyzer
         shell: pwsh
         run: |

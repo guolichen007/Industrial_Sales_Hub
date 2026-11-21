@@ -6,7 +6,8 @@ param(
     [string]$AllowedRemote = 'LocalSubnet',   # 防火墙放行范围：LocalSubnet 或具体网段，如 192.168.1.0/24
     [switch]$Https,                           # 已配置可信 HTTPS 反向代理时使用
     [switch]$NoBrowser,
-    [switch]$Unattended                       # 无人值守（自动化验收）：不交互、管理员密码取自环境变量 ISH_INIT_ADMIN_PASSWORD
+    [switch]$Unattended,                      # 无人值守（自动化验收）：不交互、管理员密码取自环境变量 ISH_INIT_ADMIN_PASSWORD
+    [string]$PreferredIp = ''                 # 多网卡主机：指定员工访问用的局域网 IP（写入 config\app.env 的 ISH_PREFERRED_IP）
 )
 . (Join-Path $PSScriptRoot 'common.ps1')
 Start-Log 'install'
@@ -83,12 +84,28 @@ if ($installed) {
 Write-Step '安装 Microsoft Visual C++ 运行库（PostgreSQL 依赖）'
 $vc = Join-Path $Runtime 'vc_redist.x64.exe'
 $vcKey = 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64'
+if ((Get-InstallState) -eq 'vc-reboot-required') {
+    # 上次运行时运行库要求重启：确认本次运行发生在那之后的一次开机（否则继续会导致数据库初始化失败）
+    $stFile = Join-Path $Data 'install-state.json'
+    $stAt = (Get-Item -LiteralPath $stFile).LastWriteTime
+    $boot = if ((Test-SimPlatform) -and $env:ISH_SIM_BOOT_TIME) { [datetime]$env:ISH_SIM_BOOT_TIME } else { (Get-CimInstance Win32_OperatingSystem).LastBootUpTime }
+    if ($boot -lt $stAt) { Write-Warn2 '上次安装要求重启以使 Visual C++ 运行库生效，但电脑尚未重启。请先重启，再运行 01-安装部署.bat。'; Exit-OpsLock; exit 3010 }
+    Write-Ok '已在重启后继续安装'
+}
 $vcOk = (Test-Path $vcKey) -and ((Get-ItemProperty $vcKey).Installed -eq 1) -and ([int](Get-ItemProperty $vcKey).Bld -ge 30000)
 if ($vcOk) { Write-Ok '已安装' } else {
     if (-not (Test-Path -LiteralPath $vc)) { Fail '缺少 runtime\vc_redist.x64.exe' 17 }
-    $p = Start-Process -FilePath $vc -ArgumentList '/install', '/quiet', '/norestart' -Wait -PassThru
-    if ($p.ExitCode -notin 0, 1638, 3010) { Fail "VC++ 运行库安装失败（退出码 $($p.ExitCode)）" 17 }
-    Write-Ok "已安装（退出码 $($p.ExitCode)）"
+    $code = if ($env:ISH_SIM_VC_EXIT -and (Test-SimPlatform)) { [int]$env:ISH_SIM_VC_EXIT } else { (Start-Process -FilePath $vc -ArgumentList '/install', '/quiet', '/norestart' -Wait -PassThru).ExitCode }
+    if ($code -notin 0, 1638, 3010) { Fail "VC++ 运行库安装失败（退出码 $code）" 17 }
+    if ($code -eq 3010) {
+        # RC3-G5：3010 = 安装成功但需要重启。此时继续初始化 PostgreSQL 可能因运行库未生效而失败，被误判为数据库损坏 → 保存续装状态并停止
+        Set-InstallState 'vc-reboot-required'
+        Write-Host "`nVisual C++ 运行库已安装，但 Windows 需要重启后才能生效。" -ForegroundColor Yellow
+        Write-Host '请重启电脑，然后再次以管理员身份运行 01-安装部署.bat（将从数据库初始化继续，不会重复安装运行库）。' -ForegroundColor Yellow
+        Exit-OpsLock
+        exit 3010
+    }
+    Write-Ok "已安装（退出码 $code）"
 }
 
 # ---------- 3. 目录与配置 ----------
@@ -303,11 +320,12 @@ if ($hasAdmin -ne 0) {
 Set-InstallState 'admin-ready'
 
 Write-Step '配置 Windows 防火墙（仅专用/域网络，仅应用端口）'
-Get-NetFirewallRule -DisplayName 'Industrial Sales Hub*' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+Get-AppFirewallRules | Remove-NetFirewallRule   # 只删除本程序创建的应用端口规则；HTTPS 443 等手工规则保留
 if ($cfg['ISH_LISTEN'] -like '127.0.0.1:*') {
-    Write-Ok "应用只监听 127.0.0.1:$AppPort（HTTPS 反向代理模式），不为应用端口开放防火墙；代理的 443 端口规则由代理安装步骤创建（见 HTTPS 手册）"
+    Write-Ok "应用只监听 127.0.0.1:$AppPort（HTTPS 反向代理模式），不为应用端口开放防火墙；代理的 443 端口规则由代理安装步骤创建（见 HTTPS 手册），重复安装不会删除它"
+    if (-not (Get-NetFirewallRule -DisplayName 'Industrial Sales Hub HTTPS*' -ErrorAction SilentlyContinue)) { Write-Warn2 '尚未发现 HTTPS 代理的防火墙规则（Industrial Sales Hub HTTPS (443)）：其他电脑暂时无法访问，请按 HTTPS 手册第 4.3 节创建' }
 } else {
-    $ruleName = "Industrial Sales Hub (TCP $AppPort)"
+    $ruleName = "$($script:AppFwRulePrefix)$AppPort)"
     New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort $AppPort -Action Allow -Profile Private, Domain -RemoteAddress $AllowedRemote | Out-Null
     Write-Ok "已放行 TCP $AppPort（远程范围：$AllowedRemote；数据库端口 $DbPort 不对外开放）"
 }
@@ -321,6 +339,13 @@ if (-not $health) { Fail '应用未能在 120 秒内就绪（见 logs\service �
 Write-Ok "应用就绪：$health"
 
 Write-Step '生成客户端快捷方式'
+if ($PreferredIp) {
+    if ($PreferredIp -notmatch '^\d{1,3}(\.\d{1,3}){3}$') { Fail "PreferredIp 格式错误：$PreferredIp" 14 }
+    $lines = @(Get-Content -LiteralPath $AppEnv -Encoding UTF8 | Where-Object { $_ -notmatch '^ISH_PREFERRED_IP=' }) + "ISH_PREFERRED_IP=$PreferredIp"
+    $tmpEnv = "$AppEnv.$PID.tmp"; $lines | Set-Content -LiteralPath $tmpEnv -Encoding UTF8; Move-Item -LiteralPath $tmpEnv -Destination $AppEnv -Force
+    if ((Read-AppEnv)['DJANGO_ALLOWED_HOSTS'] -notmatch [regex]::Escape($PreferredIp)) { Write-Warn2 "$PreferredIp 不在 DJANGO_ALLOWED_HOSTS 中：请编辑 config\app.env 加入后重启应用服务" }
+}
+$lanAll = @(Get-LanCandidates | ForEach-Object { $_.IP })
 $lan = Get-LanAddresses
 $scheme = if ($cfg['ISH_HTTPS'] -eq '1') { 'https' } else { 'http' }
 if ($scheme -eq 'https') { $urls = @($lan | ForEach-Object { "https://${_}/" }); $urls += "https://$($env:COMPUTERNAME)/" }
@@ -328,6 +353,7 @@ else { $urls = @($lan | ForEach-Object { "${scheme}://${_}:$AppPort/" }); $urls 
 $sc = Join-Path $Root '客户端快捷方式'
 New-Item -ItemType Directory -Force -Path $sc | Out-Null
 $first = $urls[0]
+if ($lanAll.Count -gt 1) { Write-Warn2 ("检测到多个网卡地址：{0}。快捷方式使用 {1}（默认网关所在的实体网卡）。如不对，重新运行 01-安装部署.bat -PreferredIp <地址>" -f ($lanAll -join '、'), $lan[0]) }
 Set-Content -LiteralPath (Join-Path $sc '工业销售管理系统.url') -Value "[InternetShortcut]`r`nURL=$first`r`n" -Encoding ASCII
 Set-Content -LiteralPath (Join-Path $sc '访问地址.txt') -Value (@('局域网其他电脑在浏览器中打开以下任一地址（无需安装任何软件）：') + $urls + @('', '建议在路由器中为本机设置 DHCP 保留，保证 IP 不变。')) -Encoding UTF8
 Write-Ok "快捷方式：$sc"
@@ -344,5 +370,10 @@ $urls | ForEach-Object { Write-Host "  $_" -ForegroundColor Green }
 if ($scheme -eq 'http') { Write-Host '注意：当前为 HTTP 隔离内网试用，传输未加密。' -ForegroundColor Yellow }
 Write-Host '下一步：用管理员登录 → 系统设置 → 创建负责人、商务、销售、财务账号；运行 04-立即备份 并配置计划任务（见手册）。'
 Write-IshLog '==== 安装完成'
-if (-not $NoBrowser) { Start-Process "http://127.0.0.1:$AppPort/" }
+if (-not $NoBrowser) {
+    if ($scheme -eq 'https') {
+        # RC3-G5：HTTPS 模式下 Cookie 为 Secure，回环 HTTP 地址无法登录；提示配置代理后用正式地址访问
+        Write-Host '提示：HTTPS 模式下请在完成反向代理与证书配置后，用 https://<内网域名>/ 访问（见 HTTPS内网证书配置手册）；不自动打开 HTTP 地址。' -ForegroundColor Yellow
+    } else { Start-Process "http://127.0.0.1:$AppPort/" }
+}
 exit 0

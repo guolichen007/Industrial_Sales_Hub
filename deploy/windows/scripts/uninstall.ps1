@@ -13,7 +13,8 @@ foreach ($svc in @($SvcApp, $SvcDb)) {
         Write-Ok "已删除服务 $svc"
     }
 }
-Get-NetFirewallRule -DisplayName 'Industrial Sales Hub*' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+Get-AppFirewallRules | Remove-NetFirewallRule
+if (Get-NetFirewallRule -DisplayName 'Industrial Sales Hub HTTPS*' -ErrorAction SilentlyContinue) { Write-Host '保留了手工建立的 HTTPS 代理防火墙规则（如不再需要，请在 Windows 防火墙中手动删除）' }
 Unregister-ScheduledTask -TaskName 'IndustrialSalesHub-DailyBackup' -Confirm:$false -ErrorAction SilentlyContinue
 Write-Ok '防火墙规则与计划任务已删除'
 if ($DeleteData) {

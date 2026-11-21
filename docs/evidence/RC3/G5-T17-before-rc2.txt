@@ -1,0 +1,2 @@
+RC2 重复安装会删除的规则：Industrial Sales Hub HTTPS (443)；Industrial Sales Hub (TCP 8000)
+RC2 反例成立：手工 HTTPS 443 规则被删除

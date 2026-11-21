@@ -23,4 +23,4 @@ $scheme = if ($cfg['ISH_HTTPS'] -eq '1') { 'https' } else { 'http' }
 Write-Host '局域网访问地址：' -ForegroundColor Green
 Get-LanAddresses | ForEach-Object { Write-Host "  ${scheme}://${_}:$port/" -ForegroundColor Green }
 Write-Host '关闭本窗口或浏览器不会停止系统；系统随开机自动启动。'
-if (-not $NoBrowser) { Start-Process "http://127.0.0.1:$port/" }
+if (-not $NoBrowser -and $scheme -ne 'https') { Start-Process "http://127.0.0.1:$port/" }
