@@ -23,7 +23,12 @@ from django.utils import timezone
 
 rev = q.revisions.create(version=1, quote_date=timezone.localdate(), price_basis=ent.price_basis, created_by=leader)
 QuoteLine.objects.create(revision=rev, model=prod.model, name=prod.name, unit="台", qty=Decimal("2"), unit_price=Decimal("1000"))
-services.generate_revision(rev.id, leader)
+try:
+    services.generate_revision(rev.id, leader)
+except Exception as e:  # RC2+：模板未签收只能生成试用 PDF（模拟数据不伪造签收）
+    if getattr(e, "code", "") != "template_unsigned":
+        raise
+    services.generate_revision(rev.id, leader, trial=True)
 data = b"\x89PNG" + bytes(range(256)) * 40
 Attachment.objects.create(owner_type="project", owner_id=p.id, filename="模拟附件.png", content_type="image/png", size=len(data), sha256=hashlib.sha256(data).hexdigest(),
                           storage_key=store_private("attachments", data, ".png"), uploaded_by=leader)

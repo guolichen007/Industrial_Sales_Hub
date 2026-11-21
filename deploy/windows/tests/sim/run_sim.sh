@@ -76,37 +76,37 @@ killsim() { for p in $(ls /proc | grep -E '^[0-9]+$'); do grep -qa "serve.py" /p
 killsim
 mkdir -p $SIM
 echo "== 构造安装包"
-pkg 875ef0c $SIM/pkg-rc1 2.1.0-rc1
-pkg WORKTREE $SIM/pkg-rc2 2.1.0-rc2
-# rc3sim：在 RC2 基础上加一个真实迁移（创建 sim_upgrade_marker 表），用于“迁移成功后失败”的数据库回滚
+pkg baa9ef6 $SIM/pkg-rc2 2.1.0-rc2
 pkg WORKTREE $SIM/pkg-rc3 2.1.0-rc3
-cat > $SIM/pkg-rc3/app/backend/apps/audit/migrations/0099_sim_marker.py <<'EOF'
+# rc4sim：在 RC3 基础上加一个真实迁移（创建 sim_upgrade_marker 表），用于“迁移成功后失败”的数据库回滚
+pkg WORKTREE $SIM/pkg-rc4 2.1.0-rc4
+cat > $SIM/pkg-rc4/app/backend/apps/audit/migrations/0099_sim_marker.py <<'EOF'
 from django.db import migrations
 class Migration(migrations.Migration):
     dependencies = [("audit", "0001_initial")]
     operations = [migrations.RunSQL("CREATE TABLE sim_upgrade_marker(id int)", "DROP TABLE sim_upgrade_marker")]
 EOF
-sed -i 's/^APP_VERSION = .*/APP_VERSION = "2.1.0-rc3"/' $SIM/pkg-rc3/app/backend/config/settings.py
-( cd $SIM/pkg-rc3 && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum | sed 's#  \./#  #' > SHA256SUMS.txt )
-cp -a $SIM/pkg-rc3 $SIM/pkg-rc3-bad
-sed -i 's/CREATE TABLE sim_upgrade_marker(id int)/CREATE TABLE sim_upgrade_marker(id int); SELECT 1\/0/' $SIM/pkg-rc3-bad/app/backend/apps/audit/migrations/0099_sim_marker.py
-( cd $SIM/pkg-rc3-bad && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum | sed 's#  \./#  #' > SHA256SUMS.txt )
-cp -a $SIM/pkg-rc2 $SIM/pkg-rc2-tampered; echo "x" >> $SIM/pkg-rc2-tampered/app/backend/manage.py
+sed -i 's/^APP_VERSION = .*/APP_VERSION = "2.1.0-rc4"/' $SIM/pkg-rc4/app/backend/config/settings.py
+( cd $SIM/pkg-rc4 && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum | sed 's#  \./#  #' > SHA256SUMS.txt )
+cp -a $SIM/pkg-rc4 $SIM/pkg-rc4-bad
+sed -i 's/CREATE TABLE sim_upgrade_marker(id int)/CREATE TABLE sim_upgrade_marker(id int); SELECT 1\/0/' $SIM/pkg-rc4-bad/app/backend/apps/audit/migrations/0099_sim_marker.py
+( cd $SIM/pkg-rc4-bad && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum | sed 's#  \./#  #' > SHA256SUMS.txt )
+cp -a $SIM/pkg-rc3 $SIM/pkg-rc3-tampered; echo "x" >> $SIM/pkg-rc3-tampered/app/backend/manage.py
 INST=$SIM/inst
 
 want() { [[ $SCEN == all || " $SCEN " == *" $1 "* ]]; }
 
-# ---------------------------------------------------------------- 1. RC1 → RC2 成功升级
+# ---------------------------------------------------------------- 1. RC2 → RC3 成功升级
 if want ok; then
-note "## 场景 ok：RC1(875ef0c) → RC2 升级成功"
-install_old $SIM/pkg-rc1 ishsim
-B=$(fp $INST); check $([[ $(hver) == 2.1.0-rc1 ]]; echo $?) "升级前应用版本 rc1"
-ps_run $SIM/pkg-rc2/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/ok.log 2>&1; rc=$?
+note "## 场景 ok：RC2(baa9ef6) → RC3 升级成功"
+install_old $SIM/pkg-rc2 ishsim
+B=$(fp $INST); check $([[ $(hver) == 2.1.0-rc2 ]]; echo $?) "升级前应用版本 rc2"
+ps_run $SIM/pkg-rc3/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/ok.log 2>&1; rc=$?
 cp $INST/logs/sim-services.log $EV/ok.services.log 2>/dev/null; tail -30 $INST/logs/sim-app.log > $EV/ok.app.log 2>/dev/null
 check $rc "upgrade.ps1 退出码 0" "rc=$rc"
-check $([[ $(hver) == 2.1.0-rc2 ]]; echo $?) "升级后 /healthz 版本 2.1.0-rc2"
-relcheck $INST; check $? "安装目录发行文件与 RC2 清单逐文件一致"
-cmp -s $INST/SHA256SUMS.txt $SIM/pkg-rc2/SHA256SUMS.txt; check $? "SHA256SUMS.txt = 新包清单"
+check $([[ $(hver) == 2.1.0-rc3 ]]; echo $?) "升级后 /healthz 版本 2.1.0-rc3"
+relcheck $INST; check $? "安装目录发行文件与 RC3 清单逐文件一致"
+cmp -s $INST/SHA256SUMS.txt $SIM/pkg-rc3/SHA256SUMS.txt; check $? "SHA256SUMS.txt = 新包清单"
 A=$(fp $INST)
 python3 - "$B" "$A" <<'PY'
 import json, sys
@@ -115,35 +115,39 @@ b, a = json.loads(sys.argv[1]), json.loads(sys.argv[2])
 same = all(a["counts"].get(k) == v for k, v in b["counts"].items()) and a["files"] == b["files"] and a["pdfs"] == b["pdfs"] and set(b["migrations"]) <= set(a["migrations"])
 new_tables = {k: v for k, v in a["counts"].items() if k not in b["counts"]}
 print("新增表：", new_tables, "新增迁移：", sorted(set(a["migrations"]) - set(b["migrations"])))
-sys.exit(0 if same and all(v == 0 for v in new_tables.values()) else 1)
+# 唯一允许带种子数据的新表：RC3 默认阶段定义（迁移 projects.0004 写入 12 条：交付 7 + 资金 5）
+SEEDED = {"projects.StageDef": 12}
+bad_counts = {k: (v, a["counts"].get(k)) for k, v in b["counts"].items() if a["counts"].get(k) != v}
+print("原有表行数变化：", bad_counts)
+sys.exit(0 if same and all(v == SEEDED.get(k, 0) for k, v in new_tables.items()) else 1)
 PY
-check $? "业务数据（原有表行数）/PDF/附件哈希升级前后一致；新增迁移为纯增量"
+check $? "业务数据（原有表行数）/PDF/附件哈希升级前后一致；新增迁移为纯增量（仅默认阶段表带种子）"
 ls -d $INST/backups/ish-backup-*-pre-upgrade-* >/dev/null 2>&1; check $? "存在 pre-upgrade 备份（旧程序生成）"
 grep -q '"state": *"DONE"' $INST/data/ops/upgrade-*.json; check $? "升级日志状态 DONE"
 check $([[ ! -f $INST/data/MAINTENANCE ]]; echo $?) "维护标记已解除"
 UID1=$(python3 -c "import json,glob;print(json.load(open(sorted(glob.glob('$INST/data/ops/upgrade-*.json'))[-1]))['id'])")
 # 同版本不加 -Repair 拒绝；降级拒绝
-ps_run $SIM/pkg-rc2/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/same.log 2>&1; check $([[ $? == 52 ]]; echo $?) "同版本无 -Repair 被拒绝(52)"
-ps_run $SIM/pkg-rc1/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/down.log 2>&1; rc=$?; check $([[ $rc != 0 ]]; echo $?) "降级被拒绝（RC1 包的旧升级器或新规则）rc=$rc"
+ps_run $SIM/pkg-rc3/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/same.log 2>&1; check $([[ $? == 52 ]]; echo $?) "同版本无 -Repair 被拒绝(52)"
+ps_run $SIM/pkg-rc2/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/down.log 2>&1; rc=$?; check $([[ $rc != 0 ]]; echo $?) "降级被拒绝（RC2 包的旧升级器或新规则）rc=$rc"
 # 已完成升级的回滚（从安装目录运行，自动复制到临时目录执行）
 ps_run $INST/scripts/upgrade.ps1 -Rollback $UID1 -Yes > $EV/ok-rollback.log 2>&1; rc=$?
 check $rc "已完成升级可按日志回滚（退出码 0）" "rc=$rc"
-check $([[ $(hver) == 2.1.0-rc1 ]]; echo $?) "回滚后版本 rc1"
-relcheck $INST; check $? "回滚后发行文件与 RC1 清单逐文件一致"
-cmp -s $INST/SHA256SUMS.txt $SIM/pkg-rc1/SHA256SUMS.txt; check $? "回滚后 SHA256SUMS.txt = RC1 清单"
+check $([[ $(hver) == 2.1.0-rc2 ]]; echo $?) "回滚后版本 rc2"
+relcheck $INST; check $? "回滚后发行文件与 RC2 清单逐文件一致"
+cmp -s $INST/SHA256SUMS.txt $SIM/pkg-rc2/SHA256SUMS.txt; check $? "回滚后 SHA256SUMS.txt = RC2 清单"
 check $([[ "$(fp $INST)" == "$B" ]]; echo $?) "回滚后数据与升级前一致"
 fi
 
 # ---------------------------------------------------------------- 2. 各阶段故障 → 自动回滚
 for stage in upgrade.after_backup upgrade.stage_copy upgrade.switch_half upgrade.migrate upgrade.verify; do
   want fault || continue
-  note "## 场景 fault：RC1 → RC2 在 $stage 注入失败"
-  install_old $SIM/pkg-rc1 ishsim
+  note "## 场景 fault：RC2 → RC3 在 $stage 注入失败"
+  install_old $SIM/pkg-rc2 ishsim
   B=$(fp $INST)
-  ISH_FAULT_INJECT=$stage ps_run $SIM/pkg-rc2/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/fault-$stage.log 2>&1; rc=$?
+  ISH_FAULT_INJECT=$stage ps_run $SIM/pkg-rc3/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/fault-$stage.log 2>&1; rc=$?
   check $([[ $rc == 56 ]]; echo $?) "$stage：升级失败并自动回滚（退出码 56）" "rc=$rc"
-  check $([[ $(hver) == 2.1.0-rc1 ]]; echo $?) "$stage：旧版本服务恢复"
-  relcheck $INST; check $? "$stage：发行文件 = RC1 清单"
+  check $([[ $(hver) == 2.1.0-rc2 ]]; echo $?) "$stage：旧版本服务恢复"
+  relcheck $INST; check $? "$stage：发行文件 = RC2 清单"
   check $([[ "$(fp $INST)" == "$B" ]]; echo $?) "$stage：数据/文件/PDF 哈希不变"
   check $([[ ! -f $INST/data/MAINTENANCE ]]; echo $?) "$stage：维护标记已解除"
   left=$(PGPASSWORD=$PGPASS_SAVE psql -h 127.0.0.1 -U ish -d postgres -tAc "SELECT count(*) FROM pg_database WHERE datname LIKE 'ishsim_preupg_%'")
@@ -152,20 +156,20 @@ done
 
 # ---------------------------------------------------------------- 3. 迁移成功后失败 → 数据库切回快照
 if want migrate; then
-note "## 场景 migrate：RC2 → rc3sim（含真实迁移）"
-install_old $SIM/pkg-rc2 ishsim
+note "## 场景 migrate：RC3 → rc4sim（含真实迁移）"
+install_old $SIM/pkg-rc3 ishsim
 B=$(fp $INST)
-ISH_FAULT_INJECT=upgrade.verify ps_run $SIM/pkg-rc3/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/migrate-then-fail.log 2>&1; rc=$?
+ISH_FAULT_INJECT=upgrade.verify ps_run $SIM/pkg-rc4/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/migrate-then-fail.log 2>&1; rc=$?
 check $([[ $rc == 56 ]]; echo $?) "迁移成功后 VERIFY 失败 → 回滚（56）" "rc=$rc"
 A=$(fp $INST); check $([[ "$A" == "$B" ]]; echo $?) "数据库切回升级前快照：无 sim_upgrade_marker、迁移列表与升级前相同"
-check $([[ $(hver) == 2.1.0-rc2 ]]; echo $?) "回滚后版本 rc2"
+check $([[ $(hver) == 2.1.0-rc3 ]]; echo $?) "回滚后版本 rc3"
 fdb=$(PGPASSWORD=$PGPASS_SAVE psql -h 127.0.0.1 -U ish -d postgres -tAc "SELECT count(*) FROM pg_database WHERE datname LIKE 'ishsim_failed_%'")
 check $([[ $fdb == 1 ]]; echo $?) "迁移后的库保留为 _failed_ 供分析"
-ps_run $SIM/pkg-rc3-bad/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/migrate-bad.log 2>&1; rc=$?
+ps_run $SIM/pkg-rc4-bad/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/migrate-bad.log 2>&1; rc=$?
 check $([[ $rc == 56 ]]; echo $?) "迁移本身失败 → 回滚（56）" "rc=$rc"
 check $([[ "$(fp $INST)" == "$B" ]]; echo $?) "迁移失败回滚后数据不变"
-ps_run $SIM/pkg-rc3/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/migrate-ok.log 2>&1; rc=$?
-check $rc "RC2 → rc3sim 成功" "rc=$rc"
+ps_run $SIM/pkg-rc4/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/migrate-ok.log 2>&1; rc=$?
+check $rc "RC3 → rc4sim 成功" "rc=$rc"
 fp $INST | grep -q '"sim_marker_table": true'; check $? "新迁移已应用"
 UID3=$(python3 -c "import json,glob;print(json.load(open(sorted(glob.glob('$INST/data/ops/upgrade-*.json'))[-1]))['id'])")
 ps_run $INST/scripts/upgrade.ps1 -Cleanup $UID3 > $EV/cleanup.log 2>&1; check $? "-Cleanup 删除旧版本与快照"
@@ -175,51 +179,51 @@ fi
 # ---------------------------------------------------------------- 4. 断电（进程被杀）→ 从新包执行 -Rollback
 if want crash; then
 note "## 场景 crash：SWITCH 中途进程被杀（模拟断电）"
-install_old $SIM/pkg-rc1 ishsim
+install_old $SIM/pkg-rc2 ishsim
 B=$(fp $INST)
-ISH_FAULT_CRASH=upgrade.switch_half ps_run $SIM/pkg-rc2/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/crash.log 2>&1; rc=$?
+ISH_FAULT_CRASH=upgrade.switch_half ps_run $SIM/pkg-rc3/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/crash.log 2>&1; rc=$?
 check $([[ $rc == 99 ]]; echo $?) "进程在 SWITCH 中途终止（99）" "rc=$rc"
 check $([[ -f $INST/data/MAINTENANCE ]]; echo $?) "崩溃后维护标记保留（系统只读）"
 check $([[ ! -d $INST/scripts ]]; echo $?) "崩溃后安装目录处于半切换状态（scripts 已移出）"
 CID=$(python3 -c "import json,glob;print(json.load(open(sorted(glob.glob('$INST/data/ops/upgrade-*.json'))[-1]))['id'])")
-ps_run $SIM/pkg-rc2/scripts/upgrade.ps1 -InstallDir $INST -Rollback $CID -Yes > $EV/crash-rollback.log 2>&1; rc=$?
+ps_run $SIM/pkg-rc3/scripts/upgrade.ps1 -InstallDir $INST -Rollback $CID -Yes > $EV/crash-rollback.log 2>&1; rc=$?
 check $rc "从新包目录执行 -Rollback 成功" "rc=$rc"
-relcheck $INST; check $? "发行文件恢复为 RC1 清单"
+relcheck $INST; check $? "发行文件恢复为 RC2 清单"
 check $([[ "$(fp $INST)" == "$B" ]]; echo $?) "数据不变"
-check $([[ $(hver) == 2.1.0-rc1 ]]; echo $?) "旧版本服务恢复"
+check $([[ $(hver) == 2.1.0-rc2 ]]; echo $?) "旧版本服务恢复"
 check $([[ ! -f $INST/data/MAINTENANCE ]]; echo $?) "维护标记已解除"
 fi
 
 # ---------------------------------------------------------------- 5. 篡改的新包、遇忙
 if want guard; then
 note "## 场景 guard：篡改安装包、另一运维任务进行中"
-install_old $SIM/pkg-rc1 ishsim
+install_old $SIM/pkg-rc2 ishsim
 B=$(fp $INST)
-ps_run $SIM/pkg-rc2-tampered/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/tampered.log 2>&1; rc=$?
+ps_run $SIM/pkg-rc3-tampered/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/tampered.log 2>&1; rc=$?
 check $([[ $rc == 51 ]]; echo $?) "篡改的新包在任何改动前被拒绝（51）" "rc=$rc"
-check $([[ "$(fp $INST)" == "$B" && $(hver) == 2.1.0-rc1 ]]; echo $?) "拒绝后系统未变化"
+check $([[ "$(fp $INST)" == "$B" && $(hver) == 2.1.0-rc2 ]]; echo $?) "拒绝后系统未变化"
 ( exec 9>>$INST/data/ops.lock; flock -x 9; echo '{"task":"backup","token":"t","pid":1,"started_at":"sim"}' > $INST/data/ops.owner.json; sleep 25 ) &
 LP=$!; sleep 1
-ps_run $SIM/pkg-rc2/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/busy.log 2>&1; rc=$?
+ps_run $SIM/pkg-rc3/scripts/upgrade.ps1 -InstallDir $INST -Yes > $EV/busy.log 2>&1; rc=$?
 check $([[ $rc == 75 ]]; echo $?) "其他运维任务持锁时升级遇忙退出（75）" "rc=$rc"
-ps_run $INST/scripts/backup.ps1 > $EV/busy-backup-rc1.log 2>&1; rc=$?
-note "RC1 反例（记录，不计入）：另一运维任务持锁时 RC1 backup.ps1 仍执行，rc=$rc（0=未互斥）"
+ps_run $INST/scripts/backup.ps1 > $EV/busy-backup-rc2.log 2>&1; rc=$?
+note "旧版 RC2 backup.ps1 在另一运维任务持锁时 rc=$rc（记录，不计入；75=遇忙）"
 kill $LP 2>/dev/null; wait $LP 2>/dev/null
-install_old $SIM/pkg-rc2 ishsim
+install_old $SIM/pkg-rc3 ishsim
 ( exec 9>>$INST/data/ops.lock; flock -x 9; echo '{"task":"upgrade","token":"t","pid":1,"started_at":"sim"}' > $INST/data/ops.owner.json; sleep 20 ) &
 LP=$!; sleep 1
-ps_run $INST/scripts/backup.ps1 > $EV/busy-backup-rc2.log 2>&1; rc=$?
-check $([[ $rc == 75 ]]; echo $?) "RC2：另一运维任务持锁时 backup.ps1 遇忙退出（75）" "rc=$rc"
-check $([[ ! -f $INST/data/backup_status.json ]] || ! grep -q '"ok": false' $INST/data/backup_status.json; echo $?) "RC2：遇忙不写失败状态"
-ps_run $INST/scripts/restore.ps1 -BackupPath $INST/backups -Production -Yes > $EV/busy-restore-rc2.log 2>&1; rc=$?
-check $([[ $rc != 0 ]]; echo $?) "RC2：持锁时正式恢复不执行（rc=$rc）"
+ps_run $INST/scripts/backup.ps1 > $EV/busy-backup-rc3.log 2>&1; rc=$?
+check $([[ $rc == 75 ]]; echo $?) "RC3：另一运维任务持锁时 backup.ps1 遇忙退出（75）" "rc=$rc"
+check $([[ ! -f $INST/data/backup_status.json ]] || ! grep -q '"ok": false' $INST/data/backup_status.json; echo $?) "RC3：遇忙不写失败状态"
+ps_run $INST/scripts/restore.ps1 -BackupPath $INST/backups -Production -Yes > $EV/busy-restore-rc3.log 2>&1; rc=$?
+check $([[ $rc != 0 ]]; echo $?) "RC3：持锁时正式恢复不执行（rc=$rc）"
 kill $LP 2>/dev/null; wait $LP 2>/dev/null
 fi
 
-# ---------------------------------------------------------------- 6. RC2 安装上的备份/恢复脚本（真实 pwsh）
+# ---------------------------------------------------------------- 6. RC3 安装上的备份/恢复脚本（真实 pwsh）
 if want restore; then
-note "## 场景 restore：RC2 安装上的 backup.ps1 / restore.ps1（演练、正式、失败回退、撤销）"
-install_old $SIM/pkg-rc2 ishsim
+note "## 场景 restore：RC3 安装上的 backup.ps1 / restore.ps1（演练、正式、失败回退、撤销）"
+install_old $SIM/pkg-rc3 ishsim
 ps_run $INST/scripts/backup.ps1 > $EV/r-backup.log 2>&1; check $? "backup.ps1 成功"
 BK=$(ls -d $INST/backups/ish-backup-* | tail -1)
 B=$(fp $INST)

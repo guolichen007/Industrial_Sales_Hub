@@ -1,0 +1,662 @@
+{
+ "results": [
+  {
+   "name": "管理员首页为系统管理（无业务金额）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "管理员创建账号 leader",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "管理员创建账号 assistant",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "管理员创建账号 sales",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "管理员创建账号 sales2",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "管理员创建账号 finance",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "管理员访问报价 API 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "最后一个管理员不能自降级",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "负责人维护三家出具主体",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "首次安装后三家模板均未签收",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "负责人首页",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售菜单无报价中心/产品库",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售登记无客户项目",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "项目关联 3 个参与方",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售不能直接设为成交",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "商务新增产品",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "模板未签收时正式生成被拒（409）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "未签收可生成试用报价（is_trial）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "试用报价不能标记已发送（409）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "商务不能签收模板（403）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "负责人签收模板 A（记录版本/责任人）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "报价改价后后端重算（2×37500×1.13=84,750）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "报价 V1 冻结",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "V1 PDF 下载哈希与存档一致",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "创建 V2 草稿",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "V2 创建后 V1 原字节不变",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "第二家公司/客户：签收后新版本生成正式报价",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "正式版本可标记已发送",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售访问 /quotations/1/ 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售访问 /quote-revisions/1/ 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售访问 /projects/1/finance/ 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售项目关联无报价、无订单",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售项目列表无报价数量字段",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售直接下载报价 PDF 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 销售看到“销售工作区”",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 商务看到“商务工作区”且含询价登记",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 财务在商务工作区：有询价登记、无报价中心",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 财务登记询价（XJ- 编号，记录登记人）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 询价明细不能填价格（400）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 询价登记页显示登记人与时间",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 销售访问询价 403",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 商务中标确认后显示“已中标 · 已转交商务”",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 负责销售页面只读：无编辑/跟进/参与方按钮",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 锁定后销售写接口 403、读取 200",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 商务记录生产交付状态",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 商务不能写资金状态（403）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 财务记录资金状态，两条线互不覆盖",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 销售看到交付/资金安全摘要且无金额与内部说明",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 销售状态接口无 private_note",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 销售操作记录：有动作/操作人，无内部摘要",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 商务可见内部说明",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "财务菜单无报价中心",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "财务首页：合同确认与交付执行",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "财务提交金额被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "财务合同表单无金额输入",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "财务确认后项目进入执行并自动建节点",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "财务订单接口无金额与报价编号",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "延期未填原因时保存按钮禁用",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "另一浏览器上下文中销售看到财务更新（1.5s 内）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售执行视图无金额",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "订单生成唯一业绩",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "负责人设置业绩可公开",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "案例预览无金额/合同号/主机厂",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "未人工确认前不能生成",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售生成案例册 PDF",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "案例 PDF 字节不含合同号/主机厂",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "其他销售可看项目公共进度、显示只读",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "其他销售修改项目被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "其他销售看不到该业绩",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "商务上传内部附件与交付附件",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "未授权前：其他销售看不到任何项目附件",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售不能自行授权“销售可见”",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "内部附件不能授权给销售（409）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "授权后：其他销售只看到并可下载交付附件，内部附件直链 403",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "销售页面“交付文件”页签显示授权文件且无内部文件",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "报价附件：商务可上传，销售/财务 403",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "历史价格查询：商务可见、销售 403",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "业绩 Excel 导出：负责人含内部金额列，销售不含",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 销售导出内部 PDF（application/pdf，带内容哈希）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 内部 PDF 字节不含合同号",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 内部 PDF 不产生对外案例记录",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 其他销售不能按 ID 指定业绩（400）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "RC3 合同确认后仍保持中标锁定（成交、sales_locked_at）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "匿名访问 /projects/ 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "匿名访问 /quotations/ 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "匿名访问 /performances/ 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "匿名访问 /users/ 被拒",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "手机 390px 无页面级横向溢出（销售首页）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "手机 390px 项目详情无横向溢出",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "5 用户混合浏览 4 轮完成（3.2s）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "浏览器发起的 API 无 5xx（317 个请求）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "普通 API P95 ≤ 1000ms（实测 60.6 ms）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "PDF 生成/下载 P95 ≤ 5000ms（实测 211.5 ms）",
+   "pass": true,
+   "detail": ""
+  },
+  {
+   "name": "浏览器无 JS 运行错误",
+   "pass": true,
+   "detail": ""
+  }
+ ],
+ "perf": {
+  "api_requests": 313,
+  "api_p50_ms": 14.0,
+  "api_p95_ms": 60.6,
+  "api_max_ms": 126.8,
+  "pdf_requests": 4,
+  "pdf_p95_ms": 211.5,
+  "pdf_max_ms": 211.5,
+  "http_5xx": 0
+ },
+ "js_errors": [],
+ "slowest_api": [
+  [
+   "POST",
+   "/api/quote-revisions/{id}/render/",
+   211.452,
+   200,
+   "assistant"
+  ],
+  [
+   "POST",
+   "/api/users/",
+   126.84,
+   201,
+   "ciadmin"
+  ],
+  [
+   "POST",
+   "/api/auth/login/",
+   116.813,
+   200,
+   "ciadmin"
+  ],
+  [
+   "POST",
+   "/api/auth/login/",
+   103.32,
+   200,
+   "leader"
+  ],
+  [
+   "POST",
+   "/api/auth/login/",
+   102.723,
+   200,
+   "assistant"
+  ],
+  [
+   "POST",
+   "/api/auth/login/",
+   102.501,
+   200,
+   "finance"
+  ],
+  [
+   "POST",
+   "/api/auth/login/",
+   102.097,
+   200,
+   "sales"
+  ],
+  [
+   "POST",
+   "/api/users/",
+   101.769,
+   201,
+   "ciadmin"
+  ],
+  [
+   "POST",
+   "/api/auth/login/",
+   101.687,
+   200,
+   "finance"
+  ],
+  [
+   "POST",
+   "/api/auth/login/",
+   101.419,
+   200,
+   "sales"
+  ],
+  [
+   "POST",
+   "/api/auth/login/",
+   100.627,
+   200,
+   "sales2"
+  ],
+  [
+   "POST",
+   "/api/auth/login/",
+   100.219,
+   200,
+   "sales"
+  ],
+  [
+   "POST",
+   "/api/users/",
+   99.929,
+   201,
+   "ciadmin"
+  ],
+  [
+   "POST",
+   "/api/users/",
+   99.541,
+   201,
+   "ciadmin"
+  ],
+  [
+   "POST",
+   "/api/users/",
+   99.529,
+   201,
+   "ciadmin"
+  ],
+  [
+   "GET",
+   "/api/projects/{id}/",
+   64.002,
+   200,
+   "leader"
+  ],
+  [
+   "GET",
+   "/api/projects/{id}/",
+   60.553,
+   200,
+   "sales"
+  ],
+  [
+   "GET",
+   "/api/projects/{id}/",
+   53.262,
+   200,
+   "leader"
+  ],
+  [
+   "GET",
+   "/api/projects/{id}/related/",
+   51.514,
+   200,
+   "leader"
+  ],
+  [
+   "GET",
+   "/api/projects/{id}/related/",
+   47.329,
+   200,
+   "assistant"
+  ],
+  [
+   "GET",
+   "/api/projects/{id}/",
+   46.145,
+   200,
+   "sales"
+  ],
+  [
+   "GET",
+   "/api/projects/{id}/",
+   45.299,
+   200,
+   "assistant"
+  ],
+  [
+   "GET",
+   "/api/projects/{id}/",
+   45.224,
+   200,
+   "finance"
+  ],
+  [
+   "GET",
+   "/api/projects/{id}/",
+   44.857,
+   200,
+   "finance"
+  ],
+  [
+   "GET",
+   "/api/order-confirmations/",
+   37.865,
+   200,
+   "assistant"
+  ]
+ ]
+}

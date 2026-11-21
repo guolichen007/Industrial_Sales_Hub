@@ -1,0 +1,98 @@
+# RC2(baa9ef6) → RC3 升级器/恢复 Linux 模拟（真实 pwsh 7 + PostgreSQL 16 + Waitress；服务/ACL/防火墙为模拟，不代表 Windows 实机）
+# 合并自 4 次运行：ok（座位表修正后重跑）/ fault / migrate+crash+guard / restore；合计 83 PASS / 0 FAIL
+## 场景 ok：RC2(baa9ef6) → RC3 升级成功
+PASS 升级前应用版本 rc2
+PASS upgrade.ps1 退出码 0
+PASS 升级后 /healthz 版本 2.1.0-rc3
+PASS 安装目录发行文件与 RC3 清单逐文件一致
+PASS SHA256SUMS.txt = 新包清单
+PASS 业务数据（原有表行数）/PDF/附件哈希升级前后一致；新增迁移为纯增量（仅默认阶段表带种子）
+PASS 存在 pre-upgrade 备份（旧程序生成）
+PASS 升级日志状态 DONE
+PASS 维护标记已解除
+PASS 同版本无 -Repair 被拒绝(52)
+PASS 降级被拒绝（RC2 包的旧升级器或新规则）rc=52
+PASS 已完成升级可按日志回滚（退出码 0）
+PASS 回滚后版本 rc2
+PASS 回滚后发行文件与 RC2 清单逐文件一致
+PASS 回滚后 SHA256SUMS.txt = RC2 清单
+PASS 回滚后数据与升级前一致
+== 模拟验收：16 PASS / 0 FAIL
+## 场景 fault：RC2 → RC3 在 upgrade.after_backup 注入失败
+PASS upgrade.after_backup：升级失败并自动回滚（退出码 56）
+PASS upgrade.after_backup：旧版本服务恢复
+PASS upgrade.after_backup：发行文件 = RC2 清单
+PASS upgrade.after_backup：数据/文件/PDF 哈希不变
+PASS upgrade.after_backup：维护标记已解除
+PASS upgrade.after_backup：未遗留数据库快照（left=0）
+## 场景 fault：RC2 → RC3 在 upgrade.stage_copy 注入失败
+PASS upgrade.stage_copy：升级失败并自动回滚（退出码 56）
+PASS upgrade.stage_copy：旧版本服务恢复
+PASS upgrade.stage_copy：发行文件 = RC2 清单
+PASS upgrade.stage_copy：数据/文件/PDF 哈希不变
+PASS upgrade.stage_copy：维护标记已解除
+PASS upgrade.stage_copy：未遗留数据库快照（left=0）
+## 场景 fault：RC2 → RC3 在 upgrade.switch_half 注入失败
+PASS upgrade.switch_half：升级失败并自动回滚（退出码 56）
+PASS upgrade.switch_half：旧版本服务恢复
+PASS upgrade.switch_half：发行文件 = RC2 清单
+PASS upgrade.switch_half：数据/文件/PDF 哈希不变
+PASS upgrade.switch_half：维护标记已解除
+PASS upgrade.switch_half：未遗留数据库快照（left=0）
+## 场景 fault：RC2 → RC3 在 upgrade.migrate 注入失败
+PASS upgrade.migrate：升级失败并自动回滚（退出码 56）
+PASS upgrade.migrate：旧版本服务恢复
+PASS upgrade.migrate：发行文件 = RC2 清单
+PASS upgrade.migrate：数据/文件/PDF 哈希不变
+PASS upgrade.migrate：维护标记已解除
+PASS upgrade.migrate：未遗留数据库快照（left=0）
+## 场景 fault：RC2 → RC3 在 upgrade.verify 注入失败
+PASS upgrade.verify：升级失败并自动回滚（退出码 56）
+PASS upgrade.verify：旧版本服务恢复
+PASS upgrade.verify：发行文件 = RC2 清单
+PASS upgrade.verify：数据/文件/PDF 哈希不变
+PASS upgrade.verify：维护标记已解除
+PASS upgrade.verify：未遗留数据库快照（left=0）
+## 场景 migrate：RC3 → rc4sim（含真实迁移）
+PASS 迁移成功后 VERIFY 失败 → 回滚（56）
+PASS 数据库切回升级前快照：无 sim_upgrade_marker、迁移列表与升级前相同
+PASS 回滚后版本 rc3
+PASS 迁移后的库保留为 _failed_ 供分析
+PASS 迁移本身失败 → 回滚（56）
+PASS 迁移失败回滚后数据不变
+PASS RC3 → rc4sim 成功
+PASS 新迁移已应用
+PASS -Cleanup 删除旧版本与快照
+PASS 旧版本目录已删除
+## 场景 crash：SWITCH 中途进程被杀（模拟断电）
+PASS 进程在 SWITCH 中途终止（99）
+PASS 崩溃后维护标记保留（系统只读）
+PASS 崩溃后安装目录处于半切换状态（scripts 已移出）
+PASS 从新包目录执行 -Rollback 成功
+PASS 发行文件恢复为 RC2 清单
+PASS 数据不变
+PASS 旧版本服务恢复
+PASS 维护标记已解除
+## 场景 guard：篡改安装包、另一运维任务进行中
+PASS 篡改的新包在任何改动前被拒绝（51）
+PASS 拒绝后系统未变化
+PASS 其他运维任务持锁时升级遇忙退出（75）
+旧版 RC2 backup.ps1 在另一运维任务持锁时 rc=75（记录，不计入；75=遇忙）
+PASS RC3：另一运维任务持锁时 backup.ps1 遇忙退出（75）
+PASS RC3：遇忙不写失败状态
+PASS RC3：持锁时正式恢复不执行（rc=20）
+## 场景 restore：RC3 安装上的 backup.ps1 / restore.ps1（演练、正式、失败回退、撤销）
+PASS backup.ps1 成功
+PASS 备份后写入了新业务数据
+PASS 恢复演练（不影响正式数据）
+PASS 正式恢复切换中失败 → 自动回退（40）
+PASS 回退后数据 = 恢复前
+PASS 回退后应用已重新启动
+PASS 恢复成功但启动失败 → 按日志撤销（41）
+PASS 撤销后数据 = 恢复前
+PASS 正式恢复成功
+PASS 正式恢复后数据 = 备份时刻
+PASS 恢复后应用运行
+PASS 撤销已完成的恢复
+PASS 撤销后数据 = 恢复前
+== 模拟验收：13 PASS / 0 FAIL

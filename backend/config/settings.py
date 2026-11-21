@@ -27,7 +27,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-APP_VERSION = "2.1.0-rc2"
+APP_VERSION = "2.1.0-rc3"
 DEV_SECRET = "dev-only-insecure-key-change-me"
 
 

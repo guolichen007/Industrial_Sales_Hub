@@ -3,7 +3,7 @@
 用法：E2E_BASE=http://<主机局域网IP>:8000 E2E_ADMIN=<管理员> E2E_ADMIN_PW=<密码> python e2e/e2e_v21_lan.py <输出目录>
 流程：管理员创建 5 个业务账号 → 负责人维护出具主体 → 销售登记无客户项目并关联参与方 → 商务为两家公司/客户报价、V2 →
       财务确认合同（无金额）→ 财务更新节点 → 第二个浏览器上下文中销售在刷新/轮询后看到节点 → 负责人补录金额/业绩/案例 →
-      销售生成公开案例 PDF；同时验证每个角色的菜单、越权 API、金额泄露、移动端、无 JS 错误；记录 API 时延 P95。
+      销售生成公开案例 PDF；RC3：两工作区、询价登记、中标转交锁定销售、两条状态线、操作记录、内部业绩 PDF；同时验证每个角色的菜单、越权 API、金额泄露、移动端、无 JS 错误；记录 API 时延 P95。
 """
 import json
 import os
@@ -210,6 +210,61 @@ with sync_playwright() as pw:
     r = ps.request.get(f"{BASE}/api/quote-revisions/{v1['id']}/pdf/")
     check("销售直接下载报价 PDF 被拒", r.status == 403, r.status)
 
+    # ---------- RC3-G0/G1/G2：两工作区、询价登记、中标转交锁定销售、两条状态线 ----------
+    check("RC3 销售看到“销售工作区”", "销售工作区" in ps.inner_text("aside"), ps.inner_text("aside")[:120])
+    check("RC3 商务看到“商务工作区”且含询价登记", "商务工作区" in pas.inner_text("aside") and "询价登记" in nav_labels(pas))
+    cfi = new()
+    pfi = login(cfi, "finance", PW)
+    check("RC3 财务在商务工作区：有询价登记、无报价中心", "询价登记" in nav_labels(pfi) and "报价中心" not in nav_labels(pfi), nav_labels(pfi))
+    s, inq = api(pfi, "POST", "/inquiries/", {"project": pid, "inquirer": acc["华东港口产业集团"], "received_on": time.strftime("%Y-%m-%d"), "requirement": "斗轮机集中润滑改造",
+                                                "items": [{"model": "LUB-320", "name": "集中润滑系统", "qty": "2", "unit": "套"}]})
+    check("RC3 财务登记询价（XJ- 编号，记录登记人）", s == 201 and inq["code"].startswith("XJ-") and inq["created_by_name"] == "财务·陈静", (s, inq))
+    s, d = api(pfi, "PATCH", f"/inquiries/{inq['id']}/", {"items": [{"model": "x", "unit_price": "100"}]})
+    check("RC3 询价明细不能填价格（400）", s == 400, s)
+    pfi.goto(BASE + "/inquiries")
+    pfi.wait_for_selector(f"text={inq['code']}")
+    check("RC3 询价登记页显示登记人与时间", "财务·陈静" in pfi.inner_text("table"))
+    s, _ = api(ps, "GET", "/inquiries/")
+    check("RC3 销售访问询价 403", s == 403, s)
+    # 中标确认（早于合同）：商务在项目页点击按钮 → 销售写入锁定
+    pas.goto(f"{BASE}/projects/{pid}")
+    pas.wait_for_selector(".detailbanner")
+    pas.click("button:has-text('中标确认 · 转交商务')")
+    pas.wait_for_selector("text=已转交商务", timeout=15000)
+    check("RC3 商务中标确认后显示“已中标 · 已转交商务”", "已转交商务" in pas.inner_text(".detailbanner"))
+    ps.goto(f"{BASE}/projects/{pid}")
+    ps.wait_for_selector(".detailbanner")
+    ps.wait_for_selector("text=销售只读")
+    check("RC3 负责销售页面只读：无编辑/跟进/参与方按钮", ps.locator("button:has-text('编辑项目')").count() == 0 and ps.locator("button:has-text('+ 售前跟进')").count() == 0
+          and ps.locator("button:has-text('关联参与方')").count() == 0)
+    s1, _ = api(ps, "PATCH", f"/projects/{pid}/", {"description": "中标后改"})
+    s2, _ = api(ps, "POST", f"/projects/{pid}/updates/", {"stream": "PRESALE", "title": "中标后跟进"})
+    s3, _ = api(ps, "POST", f"/projects/{pid}/parties/", {"account": acc["华东港口产业集团"], "party_role": "业主"})
+    s4, _ = api(ps, "GET", f"/projects/{pid}/")
+    check("RC3 锁定后销售写接口 403、读取 200", (s1, s2, s3, s4) == (403, 403, 403, 200), (s1, s2, s3, s4))
+    s, d = api(pas, "POST", f"/projects/{pid}/tracks/", {"track": "DELIVERY", "code": "IN_PRODUCTION", "public_note": "已排产", "private_note": "内部：成本超预算 8 万"})
+    check("RC3 商务记录生产交付状态", s == 201, (s, d))
+    s, d = api(pas, "POST", f"/projects/{pid}/tracks/", {"track": "PAYMENT", "code": "PREPAID"})
+    check("RC3 商务不能写资金状态（403）", s == 403, s)
+    s, d = api(pfi, "POST", f"/projects/{pid}/tracks/", {"track": "PAYMENT", "code": "PREPAID", "public_note": "预付款已到账", "private_note": "到账 36 万"})
+    check("RC3 财务记录资金状态，两条线互不覆盖", s == 201 and d["summary"]["delivery"]["code"] == "IN_PRODUCTION" and d["summary"]["payment"]["code"] == "PREPAID", (s, d))
+    ps.reload()
+    ps.wait_for_selector("text=交付与资金状态")
+    ps.wait_for_selector("text=预付款已到账")
+    body = ps.inner_text("body")
+    check("RC3 销售看到交付/资金安全摘要且无金额与内部说明", "生产中" in body and "预付款已到账" in body and "36 万" not in body and "8 万" not in body and "内部：" not in body, body[:300])
+    s, raw = api(ps, "GET", f"/projects/{pid}/tracks/")
+    check("RC3 销售状态接口无 private_note", "private_note" not in json.dumps(raw, ensure_ascii=False) and "36 万" not in json.dumps(raw, ensure_ascii=False))
+    ps.screenshot(path=f"{OUT}/12_rc3_sales_locked_tracks.png", full_page=True)
+    ps.click(".tabbar >> text=操作记录")
+    ps.wait_for_selector("text=中标确认/转交商务")
+    act = ps.inner_text("body")
+    check("RC3 销售操作记录：有动作/操作人，无内部摘要", "记录交付/资金状态" in act and "36 万" not in act and "字段：" not in act, act[:300])
+    pas.reload()
+    pas.wait_for_selector("text=交付与资金状态")
+    check("RC3 商务可见内部说明", "成本超预算 8 万" in pas.inner_text("body"))
+    pas.screenshot(path=f"{OUT}/13_rc3_assistant_tracks.png", full_page=True)
+
     # ---------- 财务：确认合同（无金额）、更新节点 ----------
     cf = new()
     pf = login(cf, "finance", PW)
@@ -364,6 +419,19 @@ with sync_playwright() as pw:
     hl = [c.value for c in next(_lw(_io.BytesIO(rl.body())).active.iter_rows())]
     hs = [c.value for c in next(_lw(_io.BytesIO(rs.body())).active.iter_rows())]
     check("业绩 Excel 导出：负责人含内部金额列，销售不含", rl.status == 200 and rs.status == 200 and "内部金额" in hl and "内部金额" not in hs, (hl, hs))
+
+    # ---------- RC3-G3：业绩筛选 → 内部安全版 PDF ----------
+    ps.goto(BASE + "/performance")
+    ps.wait_for_selector("text=导出内部 PDF")
+    rp = ps.request.get(f"{BASE}/api/performances/export-pdf/")
+    check("RC3 销售导出内部 PDF（application/pdf，带内容哈希）", rp.status == 200 and rp.headers.get("content-type") == "application/pdf" and len(rp.headers.get("x-content-sha256", "")) == 64, rp.status)
+    check("RC3 内部 PDF 字节不含合同号", b"HT-LAN" not in rp.body())
+    s, rels2 = api(ps, "GET", "/case-releases/")
+    check("RC3 内部 PDF 不产生对外案例记录", len(rels2) == 1, rels2)
+    s, _ = api(p3, "GET", f"/performances/export-pdf/?ids={perfs[0]['id']}")
+    check("RC3 其他销售不能按 ID 指定业绩（400）", s == 400, s)
+    s, me_p = api(pl, "GET", f"/projects/{pid}/")
+    check("RC3 合同确认后仍保持中标锁定（成交、sales_locked_at）", me_p["presale_phase"] == "成交" and me_p["sales_locked_at"], me_p.get("presale_phase"))
 
     # ---------- 匿名 ----------
     can_ = new()
