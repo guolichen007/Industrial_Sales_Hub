@@ -31,6 +31,24 @@ def compute_totals(lines, host_qty=1):
     return {"set_net": set_net, "set_tax": set_tax, "set_gross": set_gross, "net": set_net * hq, "tax": set_tax * hq, "gross": set_gross * hq}
 
 
+def inquiry_status_for(quotes):
+    """询价的自动状态（纯函数，迁移复用）：有关联报价已发送过 → 已报价；有未作废报价（草稿/已生成/未发送失标）→ 报价中；否则待报价。"""
+    live = [q for q in quotes if q.status != "CANCELLED"]
+    if any(q.sent_at or q.status in ("SENT", "ACCEPTED") for q in live):
+        return "QUOTED"
+    return "QUOTING" if live else "OPEN"
+
+
+def sync_inquiry_status(inquiry):
+    """按关联报价重算询价状态；人工“已关闭”的询价保持不变。"""
+    if inquiry is None or inquiry.status == "CLOSED":
+        return
+    new = inquiry_status_for(list(inquiry.quotes.all()))
+    if new != inquiry.status:
+        inquiry.status = new
+        inquiry.save(update_fields=["status", "updated_at"])
+
+
 def next_quote_code():
     year = timezone.localdate().year
     prefix = f"QT-{year}-"

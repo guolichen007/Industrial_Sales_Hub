@@ -87,11 +87,11 @@ def test_T06_finance_inquiry_flow_and_no_price(client_for, base):
     iid = r.json()["id"]
     bad = f.patch(f"/api/inquiries/{iid}/", {"items": [{"model": "x", "unit_price": "100"}]}, format="json")
     assert bad.status_code == 400  # 询价不记录价格
-    # 商务以该询价生成报价，询价状态变为已报价；财务只能看到报价编号，看不到价格
+    # 商务以该询价新建报价，询价变为“报价中”（V-02：仅草稿不等于已报价，已报价以报价标记发送为准）；财务只能看到报价编号，看不到价格
     q = client_for("assistant").post("/api/quotations/", {"project": base["p_sales"].id, "recipient": base["accs"][0].id, "legal_entity": base["ents"][0].id, "inquiry": iid}, format="json")
     assert q.status_code == 201
     d = f.get(f"/api/inquiries/{iid}/").json()
-    assert d["status"] == "QUOTED" and d["quote_codes"] == [q.json()["code"]]
+    assert d["status"] == "QUOTING" and d["quote_codes"] == [q.json()["code"]]
     assert "total" not in str(d) and "price" not in str(d)
     wrong = client_for("assistant").post("/api/quotations/", {"project": base["p_other"].id, "recipient": base["accs"][0].id, "legal_entity": base["ents"][0].id, "inquiry": iid}, format="json")
     assert wrong.status_code == 400
@@ -267,3 +267,73 @@ def test_V01_revert_reason_stays_in_track_event(client_for, base, track, writer)
     upd = client_for("sales").get(f"/api/projects/{pid}/updates/").json()
     rows = upd if isinstance(upd, list) else upd["results"]
     assert any(r["title"].startswith("撤销状态记录") for r in rows)
+
+
+# ------------------------------------------------------------ V-02 询价状态：报价中 ≠ 已报价
+def _inq(c, base):
+    r = c.post("/api/inquiries/", {"project": base["p_sales"].id, "inquirer": base["accs"][0].id, "received_on": "2026-11-18", "requirement": "x"}, format="json")
+    assert r.status_code == 201
+    return r.json()["id"]
+
+
+def _inq_status(c, iid):
+    return c.get(f"/api/inquiries/{iid}/").json()["status"]
+
+
+def test_V02_inquiry_quoted_only_after_quote_sent(client_for, base):
+    """RC3 独立审计 V-02：仅创建报价草稿/生成 PDF 不代表已回复客户。已报价 = 关联报价已标记发送（或其后接受/失标）。"""
+    a, f = client_for("assistant"), client_for("finance")
+    iid = _inq(f, base)
+    assert _inq_status(f, iid) == "OPEN"
+    q = a.post("/api/quotations/", {"project": base["p_sales"].id, "recipient": base["accs"][0].id, "legal_entity": base["ents"][0].id, "inquiry": iid}, format="json").json()
+    assert _inq_status(f, iid) == "QUOTING"  # 仅草稿：报价中
+    assert f.get(f"/api/inquiries/{iid}/").json()["status_label"] == "报价中"
+    rid = q["latest"]["id"]
+    a.post(f"/api/quote-revisions/{rid}/lines/", {"product": base["prods"][0].id, "qty": "1"}, format="json")
+    assert a.post(f"/api/quote-revisions/{rid}/render/").status_code == 200
+    assert _inq_status(f, iid) == "QUOTING"  # 已生成正式 PDF 但未发送：仍是报价中
+    assert a.post(f"/api/quotations/{q['id']}/status/", {"status": "SENT"}, format="json").status_code == 200
+    assert _inq_status(f, iid) == "QUOTED"
+    assert a.post(f"/api/quotations/{q['id']}/status/", {"status": "LOST"}, format="json").status_code == 200
+    assert _inq_status(f, iid) == "QUOTED"  # 发送后失标：仍算已回复客户
+    assert [x["id"] for x in f.get("/api/inquiries/?status=QUOTED").json()] == [iid]
+
+
+def test_V02_cancel_relink_and_manual_close(client_for, base):
+    a, f = client_for("assistant"), client_for("finance")
+    i1, i2 = _inq(f, base), _inq(f, base)
+    q = a.post("/api/quotations/", {"project": base["p_sales"].id, "recipient": base["accs"][0].id, "legal_entity": base["ents"][0].id, "inquiry": i1}, format="json").json()
+    assert (_inq_status(f, i1), _inq_status(f, i2)) == ("QUOTING", "OPEN")
+    assert a.patch(f"/api/quotations/{q['id']}/", {"inquiry": i2}, format="json").status_code == 200  # 改关联询价：两边都重算
+    assert (_inq_status(f, i1), _inq_status(f, i2)) == ("OPEN", "QUOTING")
+    assert a.post(f"/api/quotations/{q['id']}/status/", {"status": "CANCELLED"}, format="json").status_code == 200
+    assert _inq_status(f, i2) == "OPEN"  # 唯一报价作废：回到待报价
+    # 人工只能“关闭/重新打开”，不能手工标记报价中/已报价
+    assert f.patch(f"/api/inquiries/{i1}/", {"status": "QUOTED"}, format="json").status_code == 400
+    assert f.patch(f"/api/inquiries/{i1}/", {"status": "CLOSED"}, format="json").status_code == 200
+    a.post("/api/quotations/", {"project": base["p_sales"].id, "recipient": base["accs"][0].id, "legal_entity": base["ents"][0].id, "inquiry": i1}, format="json")
+    assert _inq_status(f, i1) == "CLOSED"  # 已关闭的询价不被报价自动改回
+    assert f.patch(f"/api/inquiries/{i1}/", {"status": "OPEN"}, format="json").status_code == 200
+    assert _inq_status(f, i1) == "QUOTING"  # 重新打开后按关联报价重算
+
+
+def test_V02_migration_recomputes_rc3_era_inquiries(client_for, base):
+    """5c83523 时期“仅建草稿即已报价”的询价在迁移后变为报价中；发送后失标的报价按审计补记 sent_at 并保持已报价。"""
+    import importlib
+
+    from django.apps import apps as global_apps
+
+    from apps.audit.models import AuditEvent
+    from apps.quotations.models import Inquiry, Quote
+
+    a, f = client_for("assistant"), client_for("finance")
+    i_draft, i_lost = _inq(f, base), _inq(f, base)
+    a.post("/api/quotations/", {"project": base["p_sales"].id, "recipient": base["accs"][0].id, "legal_entity": base["ents"][0].id, "inquiry": i_draft}, format="json")
+    ql = a.post("/api/quotations/", {"project": base["p_sales"].id, "recipient": base["accs"][0].id, "legal_entity": base["ents"][0].id, "inquiry": i_lost}, format="json").json()
+    # 模拟 RC3 早期数据：询价被直接标为已报价、无 sent_at；一份报价在审计中有“→ 已发送”后又失标
+    Inquiry.objects.filter(pk__in=[i_draft, i_lost]).update(status="QUOTED")
+    Quote.objects.filter(pk=ql["id"]).update(status="LOST", sent_at=None)
+    AuditEvent.objects.create(action="status", resource="quote", resource_id=str(ql["id"]), summary=f"报价 {ql['code']}：已生成 → 已发送（报价状态不等于业绩）")
+    importlib.import_module("apps.quotations.migrations.0005_rc3_v02_inquiry_quoting").backfill(global_apps, None)
+    assert Inquiry.objects.get(pk=i_draft).status == "QUOTING"
+    assert Inquiry.objects.get(pk=i_lost).status == "QUOTED" and Quote.objects.get(pk=ql["id"]).sent_at is not None

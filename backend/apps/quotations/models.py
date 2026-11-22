@@ -24,6 +24,7 @@ class Quote(models.Model):
     title = models.CharField("报价标题", max_length=150, blank=True)
     inquiry = models.ForeignKey("quotations.Inquiry", null=True, blank=True, on_delete=models.SET_NULL, related_name="quotes")
     status = models.CharField(max_length=10, choices=QUOTE_STATUSES, default="DRAFT")
+    sent_at = models.DateTimeField("首次标记已发送时间", null=True, blank=True)  # RC3-V02：询价“已报价”以此为准（发送后再失标仍算已回复）
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -115,7 +116,8 @@ class Inquiry(models.Model):
     与“对外报价单”（Quote）是不同对象：一条询价可对应 0..n 份报价（Quote.inquiry）。
     若甲方确认“询价单”只是报价单的叫法，本表可不使用（导航仍以报价中心为准），不影响报价。"""
 
-    STATUS = [("OPEN", "待报价"), ("QUOTED", "已报价"), ("CLOSED", "已关闭")]
+    # RC3-V02：OPEN/QUOTING/QUOTED 由关联报价自动计算（sync_inquiry_status）；人工只能关闭/重新打开
+    STATUS = [("OPEN", "待报价"), ("QUOTING", "报价中"), ("QUOTED", "已报价"), ("CLOSED", "已关闭")]
     code = models.CharField("询价编号", max_length=30, unique=True)
     project = models.ForeignKey("projects.Project", on_delete=models.PROTECT, related_name="inquiries")
     inquirer = models.ForeignKey("organizations.Account", null=True, blank=True, on_delete=models.PROTECT, related_name="inquiries")

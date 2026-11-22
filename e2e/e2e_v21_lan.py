@@ -224,6 +224,11 @@ with sync_playwright() as pw:
     pfi.goto(BASE + "/inquiries")
     pfi.wait_for_selector(f"text={inq['code']}")
     check("RC3 询价登记页显示登记人与时间", "财务·陈静" in pfi.inner_text("table"))
+    s, qi = api(pas, "POST", "/quotations/", {"project": pid, "recipient": acc["华东港口产业集团"], "legal_entity": ents[0]["id"], "inquiry": inq["id"]})
+    pfi.reload()
+    pfi.wait_for_selector(f"text={inq['code']}")
+    row = pfi.locator(f"tr:has-text('{inq['code']}')").inner_text()
+    check("RC3-V02 关联报价草稿后询价显示“报价中”（不是已报价）", s == 201 and "报价中" in row and "已报价" not in row, (s, row))
     s, _ = api(ps, "GET", "/inquiries/")
     check("RC3 销售访问询价 403", s == 403, s)
     # 中标确认（早于合同）：商务在项目页点击按钮 → 销售写入锁定

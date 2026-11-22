@@ -172,9 +172,7 @@ class QuoteViewSet(viewsets.ModelViewSet):
         def _create(code):
             q = s.save(code=code, owner=self.request.user)
             QuoteRevision.objects.create(quote=q, version=1, quote_date=timezone.localdate(), terms=q.legal_entity.default_terms, price_basis=q.legal_entity.price_basis, created_by=self.request.user)
-            if q.inquiry_id and q.inquiry.status == "OPEN":
-                q.inquiry.status = "QUOTED"
-                q.inquiry.save(update_fields=["status", "updated_at"])
+            services.sync_inquiry_status(q.inquiry)  # 仅草稿 → 报价中（V-02：不是“已报价”）
             return q
 
         q = create_with_code(services.next_quote_code, _create, serializer=s)
@@ -189,7 +187,11 @@ class QuoteViewSet(viewsets.ModelViewSet):
         frozen = QuoteRevision.objects.filter(quote=q).exclude(status=QuoteRevision.DRAFT).exists()
         if frozen and any(k in s.validated_data and s.validated_data[k] != getattr(q, k) for k in ("project", "recipient", "legal_entity")):
             raise BusinessError("报价已有冻结版本，不能更换项目/接收客户/出具公司；请新建报价。", code="revision_frozen")
+        old_inquiry = q.inquiry
         q = s.save()
+        if old_inquiry != q.inquiry:  # 改关联询价：原询价与新询价都重算
+            services.sync_inquiry_status(old_inquiry)
+            services.sync_inquiry_status(q.inquiry)
         if "legal_entity" in s.validated_data:
             QuoteRevision.objects.filter(quote=q, status=QuoteRevision.DRAFT).update(price_basis=q.legal_entity.price_basis)
         audit(request, "update", "quote", q.id, f"修改报价 {q.code}")
@@ -210,7 +212,10 @@ class QuoteViewSet(viewsets.ModelViewSet):
             raise BusinessError("该报价已有有效的合同/订单确认，不能改回其他状态；请先撤销确认。", code="has_order")
         old = q.get_status_display()
         q.status = new
-        q.save(update_fields=["status", "updated_at"])
+        if new == "SENT" and q.sent_at is None:
+            q.sent_at = timezone.now()
+        q.save(update_fields=["status", "sent_at", "updated_at"])
+        services.sync_inquiry_status(q.inquiry)
         audit(request, "status", "quote", q.id, f"报价 {q.code}：{old} → {q.get_status_display()}（报价状态不等于业绩）")
         return Response(QuoteSerializer(q).data)
 
@@ -463,6 +468,11 @@ class InquirySerializer(serializers.ModelSerializer):
             out.append({k: str(it.get(k, ""))[:120] for k in ("model", "name", "qty", "unit", "note")})
         return out
 
+    def validate_status(self, v):
+        if v not in ("OPEN", "CLOSED"):
+            raise serializers.ValidationError("“报价中/已报价”由关联报价自动计算；人工只能关闭或重新打开询价")
+        return v
+
     def validate(self, data):
         if data.get("due_on") and data.get("received_on") and data["due_on"] < data["received_on"]:
             raise serializers.ValidationError({"due_on": "要求回复日期不能早于收到日期"})
@@ -483,7 +493,7 @@ class InquiryViewSet(viewsets.ModelViewSet):
         p = self.request.query_params
         if (v := int_param(p.get("project"), "project")) is not None:
             qs = qs.filter(project_id=v)
-        if (st := p.get("status")) in ("OPEN", "QUOTED", "CLOSED"):
+        if (st := p.get("status")) in ("OPEN", "QUOTING", "QUOTED", "CLOSED"):
             qs = qs.filter(status=st)
         if q := p.get("q"):
             q = str_param(q, "q", 100)
@@ -505,4 +515,5 @@ class InquiryViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, s):
         o = s.save(updated_by=self.request.user)
+        services.sync_inquiry_status(o)  # 重新打开（OPEN）时按关联报价重算为待报价/报价中/已报价
         audit(self.request, "update", "inquiry", o.id, f"修改询价 {o.code}", {"fields": sorted(s.validated_data)})

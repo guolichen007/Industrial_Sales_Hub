@@ -1,0 +1,4 @@
+# V-02 反例（5c83523，修复前）：仅建报价草稿 / 改关联询价时询价已显示“已报价”
+E       AssertionError: assert 'QUOTED' == 'QUOTING'
+E       AssertionError: assert ('QUOTED', 'OPEN') == ('QUOTING', 'OPEN')
+2 failed, 21 deselected in 6.23s

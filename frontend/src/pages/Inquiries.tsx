@@ -13,7 +13,7 @@ function InquiryForm({ initial, onClose, onSaved }: { initial?: any; onClose: ()
   const alist = Array.isArray(accounts) ? accounts : accounts?.results || [];
   const f = useForm({
     project: initial?.project ?? "", inquirer: initial?.inquirer ?? "", inquirer_contact: initial?.inquirer_contact || "",
-    received_on: initial?.received_on || new Date().toISOString().slice(0, 10), due_on: initial?.due_on || "", requirement: initial?.requirement || "", status: initial?.status || "OPEN",
+    received_on: initial?.received_on || new Date().toISOString().slice(0, 10), due_on: initial?.due_on || "", requirement: initial?.requirement || "", status: initial?.status === "CLOSED" ? "CLOSED" : "OPEN",
   });
   const [items, setItems] = useState<any[]>(initial?.items || []);
   const save = async () => {
@@ -37,7 +37,7 @@ function InquiryForm({ initial, onClose, onSaved }: { initial?: any; onClose: ()
         <Field label="询价联系人"><input className="input" {...f.bind("inquirer_contact")} /></Field>
         <Field label="收到日期 *"><input className="input" type="date" {...f.bind("received_on")} /></Field>
         <Field label="要求回复日期" err={f.errs.due_on}><input className="input" type="date" {...f.bind("due_on")} /></Field>
-        {initial && <Field label="状态"><select className="select" {...f.bind("status")}><option value="OPEN">待报价</option><option value="QUOTED">已报价</option><option value="CLOSED">已关闭</option></select></Field>}
+        {initial && <Field label="状态"><select className="select" {...f.bind("status")}><option value="OPEN">未关闭（按关联报价自动：当前 {initial.status === "CLOSED" ? "待重算" : initial.status_label}）</option><option value="CLOSED">已关闭</option></select></Field>}
         <Field label="需求说明（不填价格）" full><textarea className="input textarea" {...f.bind("requirement")} /></Field>
         <div className="formfield full">
           <label>产品明细（型号/名称/数量/单位；价格在报价中心填写）</label>
@@ -63,12 +63,12 @@ export default function Inquiries() {
   const [modal, setModal] = useState<any>(null);
   return (
     <>
-      <PageHead k="INQUIRIES" title="询价登记" sub="客户/主机厂发来的询价资料（不含价格）；报价在报价中心生成并关联询价">
+      <PageHead k="INQUIRIES" title="询价登记" sub="客户/主机厂发来的询价资料（不含价格）；关联报价后为“报价中”，报价标记已发送后为“已报价”">
         {can("inquiry.write") && <button className="btn primary" onClick={() => setModal("new")}>+ 登记询价</button>}
       </PageHead>
       <div className="toolbar">
         <input className="input" placeholder="搜索编号、项目、询价方、需求" value={q} onChange={(e) => setQ(e.target.value)} />
-        <select className="select" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">全部状态</option><option value="OPEN">待报价</option><option value="QUOTED">已报价</option><option value="CLOSED">已关闭</option></select>
+        <select className="select" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">全部状态</option><option value="OPEN">待报价</option><option value="QUOTING">报价中</option><option value="QUOTED">已报价（已发送客户）</option><option value="CLOSED">已关闭</option></select>
       </div>
       <div className="card">
         {loading && !list ? <Loading err={err} /> : (
