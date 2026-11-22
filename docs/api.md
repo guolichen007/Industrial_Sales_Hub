@@ -60,7 +60,7 @@
 | POST | `performances/{id}/approve/` `…/revoke/` | — | LE | |
 | GET | `performances/stats/` `performances/facets/` | 同列表 | — | |
 | GET | `performances/export/` | LE AS FI SA | — | RC2：内部 Excel，按范围与字段白名单裁剪，写审计 |
-| GET | `performances/export-pdf/` | LE AS FI SA | — | RC3：内部安全版 PDF（同列表范围与筛选；拒绝 `ids`；≤1000 条；无金额/合同号/内部备注；写审计含 SHA256） |
+| GET | `performances/export-pdf/` | LE AS FI SA | — | RC3：内部安全版 PDF（同列表范围与筛选，**列表 `status` 不参与**；`export_status`=CONFIRMED（默认）/PENDING/REVOKED/ALL，其他值 400；标题与筛选摘要注明导出状态；拒绝 `ids`；≤1000 条；无金额/合同号/内部备注；写审计含 SHA256 与导出状态） |
 | GET | `projects/{id}/activity/` | LE AS SA FI | — | RC3：项目操作记录；SA 仅动作/操作人/时间，报价动作仅有报价权限者可见 |
 | GET | `public-cases/` | LE AS SA | — | 白名单字段；`?industry=&machine_type=&region=&product=&facets=1` |
 | POST | `case-preview/` | LE AS SA | — | 白名单字段（含已授权照片） |

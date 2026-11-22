@@ -95,7 +95,7 @@ def internal_row(p) -> dict:
     }
 
 
-def render_internal_performance_pdf(rows, filters_text: str, generator: str, generated_at: str) -> bytes:
+def render_internal_performance_pdf(rows, filters_text: str, generator: str, generated_at: str, scope_title: str = "仅已确认") -> bytes:
     for r in rows:
         extra = set(r) - set(INTERNAL_FIELDS)
         if extra:
@@ -113,7 +113,7 @@ def render_internal_performance_pdf(rows, filters_text: str, generator: str, gen
     doc = SimpleDocTemplate(buf, pagesize=page, leftMargin=12 * mm, rightMargin=12 * mm, topMargin=14 * mm, bottomMargin=16 * mm,
                             title="内部业绩查询结果（禁止外发）", author=generator, subject="INTERNAL-内部业绩", creator="Industrial Sales Hub", producer="Industrial Sales Hub", invariant=1)
     W = page[0] - 24 * mm
-    story = [Paragraph(mx("内部业绩查询结果", True), h1), Spacer(1, 2 * mm),
+    story = [Paragraph(mx(f"内部业绩查询结果（{scope_title}）", True), h1), Spacer(1, 2 * mm),
              Paragraph(mx(f"【{INTERNAL_MARK}】本文件为内部销售参考，不是对外案例；对外使用请通过“对外案例”生成经公开审批的案例册。"), ParagraphStyle("w", parent=base, textColor=colors.HexColor("#b03030"))),
              Spacer(1, 1.5 * mm), Paragraph(mx(f"筛选条件：{filters_text or '（无）'}"), small),
              Paragraph(mx(f"生成人：{generator}　生成时间：{generated_at}　共 {len(rows)} 条"), small), Spacer(1, 3 * mm)]

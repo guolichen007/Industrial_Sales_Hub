@@ -108,6 +108,7 @@ export default function Performance() {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [year, setYear] = useState("");
+  const [exportStatus, setExportStatus] = useState("CONFIRMED"); // RC3 收口 D-6：内部 PDF 导出状态显式选择，默认仅已确认
   const [fx, setFx] = useState({ industry: "", machine_type: "", region: "", source: "", year_from: "", year_to: "" });
   const filters = { q, status, year, ...fx };
   const [facets] = useLoad(() => get<any>("/performances/facets/"), []);
@@ -135,7 +136,14 @@ export default function Performance() {
     <>
       <PageHead k="PERFORMANCE LEDGER" title="业绩台账" sub={seeAmt ? "订单确认自动生成 + 历史手工补录/导入（待核实→负责人确认）" : me!.role === "SALES" ? "我的业绩（按负责/参与归属授权，不含内部金额）" : "业绩安全视图（不含内部金额）"}>
         {can("performance.export") && <a className="btn" href={"/api/performances/export/" + qs(filters)} title={seeAmt ? "按当前筛选导出（含内部金额，导出写审计）" : "按当前筛选导出（不含内部金额）"}>导出 Excel</a>}
-        {can("performance.export") && <a className="btn" href={"/api/performances/export-pdf/" + qs(filters)} title="按当前筛选导出内部安全版 PDF（无金额/合同号/内部备注，带“禁止外发”水印；不是对外案例）">导出内部 PDF</a>}
+        {can("performance.export") && (
+          <span className="rowactions">
+            <select className="select" value={exportStatus} onChange={(e) => setExportStatus(e.target.value)} title="内部 PDF 导出哪些状态（与列表筛选分开）">
+              <option value="CONFIRMED">PDF：仅已确认（默认）</option><option value="PENDING">PDF：仅待核实</option><option value="REVOKED">PDF：仅已撤销</option><option value="ALL">PDF：全部状态（含待核实/已撤销）</option>
+            </select>
+            <a className="btn" href={"/api/performances/export-pdf/" + qs({ ...filters, status: "", export_status: exportStatus })} title="按当前筛选（不含列表“状态”）+ 所选导出状态导出内部安全版 PDF（无金额/合同号/内部备注，带“禁止外发”水印；不是对外案例）">导出内部 PDF</a>
+          </span>
+        )}
         {can("import.run") && <button className="btn" onClick={() => setModal("import")}>Excel 导入历史业绩</button>}
         {can("performance.write") && <button className="btn primary" onClick={() => setModal("new")}>+ 手工补录</button>}
       </PageHead>

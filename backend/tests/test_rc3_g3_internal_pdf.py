@@ -53,7 +53,7 @@ def test_T11_sales_filtered_three_rows_safe_fields(client_for, users, base):
     for secret in (b"7654321", b"HT-SECRET"):
         assert secret not in r.content  # 二进制流中也不存在（不依赖文本抽取）
     ev = AuditEvent.objects.filter(resource="performance", action="export_pdf").latest("id")
-    assert ev.detail["rows"] == 3 and ev.detail["filters"] == {"industry": "港口"} and len(ev.detail["pdf_sha256"]) == 64
+    assert ev.detail["rows"] == 3 and ev.detail["filters"] == {"industry": "港口", "export_status": "CONFIRMED"} and len(ev.detail["pdf_sha256"]) == 64  # RC3 收口 D-6：审计记录导出状态
     assert ev.detail["pdf_sha256"] == r["X-Content-SHA256"]
 
 

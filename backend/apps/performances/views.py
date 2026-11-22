@@ -58,6 +58,10 @@ class PerformanceViewSet(viewsets.ModelViewSet):
         return PerformanceSerializer if can(self.request.user, "performance.see_amount") else PerformanceSafeSerializer
 
     def get_queryset(self):
+        return self._filtered(include_status=True)
+
+    def _filtered(self, include_status=True):
+        """可见范围 + 列表筛选。include_status=False 用于内部 PDF：导出状态只由 export_status 决定（RC3 收口 D-6）。"""
         qs = performances_for(self.request.user).select_related("project", "sales_owner", "order_confirmation")
         p = self.request.query_params
         if q := p.get("q"):
@@ -70,6 +74,8 @@ class PerformanceViewSet(viewsets.ModelViewSet):
         if (y := int_param(p.get("year_to"), "year_to")) is not None:
             qs = qs.filter(year__lte=y)
         for f in ("status", "source", "industry", "machine_type"):
+            if f == "status" and not include_status:
+                continue
             if v := p.get(f):
                 qs = qs.filter(**{f: str_param(v, f, 40)})
         if v := p.get("region"):
@@ -92,6 +98,8 @@ class PerformanceViewSet(viewsets.ModelViewSet):
         out["years"] = sorted({v for v in qs.values_list("year", flat=True)}, reverse=True)
         return Response(out)
 
+    EXPORT_STATUS = {"CONFIRMED": "仅已确认", "PENDING": "仅待核实", "REVOKED": "仅已撤销", "ALL": "全部状态（含待核实/已撤销）"}
+
     @action(detail=False, methods=["get"], url_path="export-pdf")
     def export_pdf(self, request):
         """RC3-G3 内部销售安全版 PDF：与列表相同的可见范围与筛选（服务端查询决定记录，不接受客户端传入的 ID 列表），
@@ -106,16 +114,24 @@ class PerformanceViewSet(viewsets.ModelViewSet):
             raise PermissionDenied()
         if "ids" in request.query_params or "performance_ids" in request.query_params:
             raise BusinessError("内部业绩 PDF 只按筛选条件导出，不接受指定记录 ID", code="ids_not_allowed", http_status=400)
-        qs = self.get_queryset().select_related("sales_owner").order_by("-year", "-id")
+        # RC3 收口 D-6：导出状态由显式参数 export_status 决定，与列表筛选 status 分开；未提供 → 只导出“已确认”
+        export_status = str(request.query_params.get("export_status") or "CONFIRMED").upper()
+        if export_status not in self.EXPORT_STATUS:
+            raise serializers.ValidationError({"export_status": "只能是 CONFIRMED / PENDING / REVOKED / ALL"})
+        qs = self._filtered(include_status=False)  # 列表筛选的 status 不参与 PDF 导出
+        if export_status != "ALL":
+            qs = qs.filter(status=export_status)
+        qs = qs.select_related("sales_owner").order_by("-year", "-id")
         n = qs.count()
         if n > 1000:
             raise BusinessError(f"筛选结果 {n} 条，超过单次导出上限 1000 条，请缩小筛选范围", code="too_many", http_status=400)
         labels = {"q": "关键字", "year": "年份", "year_from": "起始年", "year_to": "截止年", "status": "状态", "source": "来源", "industry": "行业", "machine_type": "主机类型", "region": "地区",
                   "sales_owner": "销售", "project": "项目"}
-        filters = {k: str(v)[:40] for k, v in request.query_params.items() if k in labels and v}
-        ftext = "；".join(f"{labels[k]}={v}" for k, v in filters.items())
+        filters = {k: str(v)[:40] for k, v in request.query_params.items() if k in labels and v and k != "status"}
+        ftext = "；".join([f"导出状态={self.EXPORT_STATUS[export_status]}"] + [f"{labels[k]}={v}" for k, v in filters.items()])
+        filters["export_status"] = export_status
         now = tz.localtime().strftime("%Y-%m-%d %H:%M")
-        pdf = render_internal_performance_pdf([internal_row(p) for p in qs], ftext, request.user.name, now)
+        pdf = render_internal_performance_pdf([internal_row(p) for p in qs], ftext, request.user.name, now, scope_title=self.EXPORT_STATUS[export_status])
         digest = sha256_bytes(pdf)
         audit(request, "export_pdf", "performance", "", f"导出内部业绩 PDF {n} 条", {"filters": filters, "rows": n, "pdf_sha256": digest})
         from urllib.parse import quote as urlquote

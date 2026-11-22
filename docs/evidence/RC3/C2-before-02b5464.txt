@@ -1,0 +1,13 @@
+# C2 反例（02b5464，修复前）：不带参数导出内部业绩 PDF 时包含待核实与已撤销（共 3 条），无 export_status 语义
+E       AssertionError: assert ('已确认业绩甲' in '内部业绩查询结果\n【公司内部资料·禁止外发】本文件为内部销售参考，不是对外案例；对外使用请通过“对外案例”生成经公开审批的案例册。\n筛选条件：（无）\n生成人：sales生成时间：2026-11-2218:52共3条\n\n序号业...nPages:1\nEncrypted:no\nPagesize:841.89x595.276pts(A
+E           AssertionError: ('PENDING', '已确认业绩甲')
+E           assert ('已确认业绩甲' in '内部业绩查询结果\n【公司内部资料·禁止外发】本文件为内部销售参考，不是对外案例；对外使用请通过“对外案例”生成经公开审批的案例册。\n筛选条件：（无）\n生成人：sales生成时间：2026-11-2218:52共3条\n\n序号业...nPages:1\nEncrypted:no\nPagesize:841.89x595.276pts(A4)\nPagerot:
+E           AssertionError: ('REVOKED', '已确认业绩甲')
+E           assert ('已确认业绩甲' in '内部业绩查询结果\n【公司内部资料·禁止外发】本文件为内部销售参考，不是对外案例；对外使用请通过“对外案例”生成经公开审批的案例册。\n筛选条件：（无）\n生成人：sales生成时间：2026-11-2218:52共3条\n\n序号业...nPages:1\nEncrypted:no\nPagesize:841.89x595.276pts(A4)\nPagerot:
+E       AssertionError: assert '内部业绩查询结果（全部状态（含待核实/已撤销））' in '内部业绩查询结果\n【公司内部资料·禁止外发】本文件为内部销售参考，不是对外案例；对外使用请通过“对外案例”生成经公开审批的案例册。\n筛选条件：（无）\n生成人：sales生成时间：2026-11-2218:52共3条\n\n序号业...n
+E       AssertionError: assert ('已确认业绩甲' in '内部业绩查询结果\n【公司内部资料 · 禁止外发】本文件为内部销售参考，不是对外案例；对外使用请通过“对外案例”生成经公开审批的案例册。\n筛选条件：状态=PENDING\n生成人：sales 生成时间：2026-11-22 18:5...1.89 x 595.276 pts (A4)\nPage rot:        0\nFile size:       36
+E       AssertionError: assert ('待核实业绩乙' not in '内部业绩查询结果\n【...n:     1.4\n'
+FAILED tests/test_rc3_closeout_c2.py::test_C2_default_exports_confirmed_only
+FAILED tests/test_rc3_closeout_c2.py::test_C2_explicit_export_status[PENDING-want0-\u4ec5\u5f85\u6838\u5b9e]
+FAILED tests/test_rc3_closeout_c2.py::test_C2_explicit_export_status[REVOKED-want1-\u4ec5\u5df2\u64a4\u9500]
+FAILED tests/test_rc3_closeout_c2.py::test_C2_explicit_export_status[ALL-want2-\u5168\u90e8\u72b6\u6001\uff08\u542b\u5f85\u6838\u5b9e/\u5df2\u64a4\u9500\uff09]
