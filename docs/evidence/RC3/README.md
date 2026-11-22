@@ -14,7 +14,7 @@
 | G3 | 内部安全版业绩 PDF | **PASS** | `test_rc3_g3_internal_pdf.py`（5）；反例 `G3-before.txt`（RC2 无此接口，5 项失败）；样张 `内部业绩PDF-虚构样张.pdf`（虚构数据） |
 | G4 | 字段级审计、发生/录入时间、操作记录 | **PASS** | `test_rc3_g4_audit.py`（5）；反例 `G4-before-baa9ef6.txt`（RC2 上 4 项失败） |
 | G5 | Windows 安装加固 T17–T21 | **代码 PASS / 实机 未执行** | `deploy/windows/tests/unit-rc3.ps1`（T17/T18）、`unit-rc3-vc.ps1`（T19）；反例 `G5-T17-before-rc2.txt`；`sim/results.txt`（RC2→RC3，83/0）；实机见 `docs/RC3-Windows实机验收手册.md` |
-| G6 | 无回退、同 SHA CI、签收、交付 | **本地 PASS / 远端 CI 待推送 / 签收未完成** | 后端 360/360（基线 292 全部保留）；E2E 105/105（基线 72 全部保留）；`e2e/e2e_v21_lan_results.json` |
+| G6 | 无回退、同 SHA CI、签收、交付 | **本地 PASS / 远端 CI 待推送 / 签收未完成** | 后端 368/368（基线 292 全部保留）；E2E 107/107（基线 72 全部保留）；`e2e/e2e_v21_lan_results.json` |
 
 本地测试环境：Linux 沙箱，Python 3.12，PostgreSQL 16（pgserver），Chromium（Playwright），PowerShell 7.4 + PSScriptAnalyzer 1.22.0（0 告警）。
 
@@ -38,6 +38,18 @@
 | 工程 | 迁移稳定性 | `quotations/0005` 内联冻结函数；迁移不得 import apps.*（静态检查）；空库迁移与 0005 回退/重做 | `test_migrations_do_not_import_runtime_app_code`、`test_V02_migration_helper_matches_runtime` | — |
 
 样张（虚构数据）：`内部询价登记单-虚构样张.pdf`、`内部业绩PDF-默认仅已确认-虚构样张.pdf`。
+
+## 1.3 对 74616ed 独立审查的定向修复（2026-11-22）
+
+| 编号 | 发现 | 修复前反例（真实 HTTP） | 修复 | 回归 |
+|---|---|---|---|---|
+| P0-01 | 商务可 `PATCH /stage-defs/{id}/ {"is_final":false}` → 不确认覆盖记录“已交付/完结” → 改回，项目显示完结但无覆盖确认 | `R74-before-74616ed.txt` 第 1 节完整链：409 → 200 → 201 → 200，摘要 is_final=true / covers_all_orders=false | `is_final` 只读；显式修改 400；新增阶段一律非完结 | `test_P0_01_*`（3）；E2E 400/409 |
+| P1-02 | 完结后新增/撤销/替换合同，完结状态与覆盖确认不变 | `KeyError: 'coverage_stale'`（无任何失效判断） | `TrackEvent.covered_order_ids`（迁移 0006 按时间回填）；按订单 ID 集合比较得出 `coverage_stale`/`needs_reconfirmation`；失效时不算交付完结；页面红色提示并要求重新确认 | `test_P1_02_*`（4，含“数量相同成员不同”与迁移回填）；E2E 截图 `e2e/14_*` |
+| P1-03 | 阶段改名后历史事件显示新名称 | 历史 label = “排产与制造中”（应为“生产中”） | 历史 `label`=`label_snapshot`，另给 `current_label`；当前摘要用最新名称 | `test_P1_03_*` |
+| P1-04 | 安装手册/包内使用说明仍写 rc2 与“财务看不到报价”；交付报告旧 G0 节矛盾；追踪矩阵旧口径 | 文档核查 | 统一为 D-2 口径；追踪矩阵第 1–6 节加“旧口径，以 RC3 矩阵为准”提示；交付报告旧节改写 | 包内 `使用说明.md` 随构建更新 |
+| P1-05 | Windows 实机手册未覆盖 C1～C4 | — | 新增 U11–U14（财务报价与金额隔离、三状态业绩 PDF、询价登记单与审计、两/三合同覆盖确认与失效、完结属性篡改 400） | 需实机执行 |
+| P2-06 | 询价单“不含价格”表述过度（自由文本可能人工写价格） | — | 改为“不含价格字段”，PDF 与表单提示需求说明/备注勿填价格、外发前人工核对；不引入金额识别 | `test_C3_*` |
+| P3-07 | CI 日志 1 条 SyntaxWarning（`import_entity_config.py` 文档字符串 `\ `） | CI Run 45024116355 后端日志 | 原始字符串 | 后端以 `-W error::SyntaxWarning` 运行通过 |
 
 ## 2. 三个必须解释的问题
 
@@ -114,8 +126,8 @@
 ## 5. 可重复命令
 
 ```bash
-cd backend && DATABASE_URL=postgres://… python -m pytest -q                       # 360 passed
-python -m pytest -q tests/test_rc3_*.py                                           # RC3 新增 67 项（tests/test_rc3_*.py）
+cd backend && DATABASE_URL=postgres://… python -m pytest -q                       # 368 passed
+python -m pytest -q tests/test_rc3_*.py                                           # RC3 新增 75 项（tests/test_rc3_*.py）
 # E2E：见 e2e/e2e_v21_lan.py 头部（需 LAN 模式 Waitress + 已构建前端）
 pwsh -File deploy/windows/tests/unit-rc3.ps1; pwsh -File deploy/windows/tests/unit-rc3-vc.ps1
 ISH_SIM_TOOLS=<含 env/venv env/pwsh 的目录> bash deploy/windows/tests/sim/run_sim.sh <输出目录>   # 需 PostgreSQL
