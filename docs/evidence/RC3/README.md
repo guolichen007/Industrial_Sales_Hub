@@ -14,9 +14,18 @@
 | G3 | 内部安全版业绩 PDF | **PASS** | `test_rc3_g3_internal_pdf.py`（5）；反例 `G3-before.txt`（RC2 无此接口，5 项失败）；样张 `内部业绩PDF-虚构样张.pdf`（虚构数据） |
 | G4 | 字段级审计、发生/录入时间、操作记录 | **PASS** | `test_rc3_g4_audit.py`（5）；反例 `G4-before-baa9ef6.txt`（RC2 上 4 项失败） |
 | G5 | Windows 安装加固 T17–T21 | **代码 PASS / 实机 未执行** | `deploy/windows/tests/unit-rc3.ps1`（T17/T18）、`unit-rc3-vc.ps1`（T19）；反例 `G5-T17-before-rc2.txt`；`sim/results.txt`（RC2→RC3，83/0）；实机见 `docs/RC3-Windows实机验收手册.md` |
-| G6 | 无回退、同 SHA CI、签收、交付 | **本地 PASS / 远端 CI 待推送 / 签收未完成** | 后端 333/333（基线 292 全部保留）；E2E 94/94（基线 72 全部保留）；`e2e/e2e_v21_lan_results.json` |
+| G6 | 无回退、同 SHA CI、签收、交付 | **本地 PASS / 远端 CI 待推送 / 签收未完成** | 后端 338/338（基线 292 全部保留）；E2E 95/95（基线 72 全部保留）；`e2e/e2e_v21_lan_results.json` |
 
 本地测试环境：Linux 沙箱，Python 3.12，PostgreSQL 16（pgserver），Chromium（Playwright），PowerShell 7.4 + PSScriptAnalyzer 1.22.0（0 告警）。
+
+## 1.1 基于 5c83523 的独立审计（2026-11-22）后续修复
+
+| 编号 | 发现 | 修复 | 反例（修复前失败） |
+|---|---|---|---|
+| V-01（P1） | 撤销状态记录时 `revert_reason` 写入执行进展 `content`，无 `payment.write` 的商务可经 `projects/{id}/updates/` 读到资金线撤销原因 | 原因只保存在 `TrackEvent.revert_reason`（`tracks/` 按该线写权限返回）；进展流只记固定文案 | `V01-before-5c83523.txt`；`test_V01_revert_reason_stays_in_track_event`（2 条线 × 5 角色 × 6 个接口） |
+| V-02（P1） | 仅创建报价草稿即把询价改为“已报价” | 新增“报价中”；已报价 = 关联报价已标记发送（`Quote.sent_at`）；作废/改关联重算；人工仅关闭/重新打开；迁移回填 | `V02-before-5c83523.txt`；`test_V02_*`（3 项）；E2E 浏览器检查 |
+
+两项均已关闭（代码 + 反例测试）。审计中的 D-01（财务报价权限）、D-02（询价单含义）、D-03（内部 PDF 默认含待确认业绩）、D-04（多合同分批）为业务口径，列入 `docs/剩余问题.md` D 节等待负责人/甲方决定，未擅自修改。
 
 ## 2. 三个必须解释的问题
 
@@ -93,8 +102,8 @@
 ## 5. 可重复命令
 
 ```bash
-cd backend && DATABASE_URL=postgres://… python -m pytest -q                       # 333 passed
-python -m pytest -q tests/test_rc3_*.py                                           # RC3 新增 41 项
+cd backend && DATABASE_URL=postgres://… python -m pytest -q                       # 338 passed
+python -m pytest -q tests/test_rc3_*.py                                           # RC3 新增 46 项
 # E2E：见 e2e/e2e_v21_lan.py 头部（需 LAN 模式 Waitress + 已构建前端）
 pwsh -File deploy/windows/tests/unit-rc3.ps1; pwsh -File deploy/windows/tests/unit-rc3-vc.ps1
 ISH_SIM_TOOLS=<含 env/venv env/pwsh 的目录> bash deploy/windows/tests/sim/run_sim.sh <输出目录>   # 需 PostgreSQL
