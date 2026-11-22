@@ -82,9 +82,14 @@ def test_T16_activity_timeline_role_trimmed(client_for, base, make_quote):
     # 商务：可见摘要与报价动作
     a = client_for("assistant").get(f"/api/projects/{pid}/activity/").json()
     assert any(r["action_label"].startswith("报价：") for r in a) and any("summary" in r for r in a)
-    # 财务（无报价权限）：无报价动作
+    # 报价动作只给有报价权限者：RC3 收口 D-2 后财务默认有报价权限（可见）；RC2 口径下财务无报价权限（不可见）
     f = client_for("finance").get(f"/api/projects/{pid}/activity/").json()
-    assert not any(r["action_label"].startswith("报价：") for r in f)
+    assert any(r["action_label"].startswith("报价：") for r in f)
+    from django.test import override_settings
+
+    with override_settings(FINANCE_SCOPE="RC2", FINANCE_QUOTE=False):
+        f = client_for("finance").get(f"/api/projects/{pid}/activity/").json()
+        assert not any(r["action_label"].startswith("报价：") for r in f)
     assert client_for("admin").get(f"/api/projects/{pid}/activity/").status_code in (403, 404)
 
 
