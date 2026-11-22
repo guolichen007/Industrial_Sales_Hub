@@ -362,3 +362,31 @@ def test_V02_migration_recomputes_rc3_era_inquiries(client_for, base):
     importlib.import_module("apps.quotations.migrations.0005_rc3_v02_inquiry_quoting").backfill(global_apps, None)
     assert Inquiry.objects.get(pk=i_draft).status == "QUOTING"
     assert Inquiry.objects.get(pk=i_lost).status == "QUOTED" and Quote.objects.get(pk=ql["id"]).sent_at is not None
+
+
+def test_migrations_do_not_import_runtime_app_code():
+    """迁移稳定性（RC3 收口 §4）：历史迁移不得导入运行时业务代码（apps.*），否则将来修改辅助函数会让干净空库迁移失败。"""
+    import ast
+
+    root = Path(__file__).resolve().parents[1] / "apps"
+    bad = []
+    for f in root.glob("*/migrations/0*.py"):
+        for node in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("apps."):
+                bad.append(f"{f.parent.parent.name}/{f.name}: from {node.module}")
+            if isinstance(node, ast.Import) and any(a.name.startswith("apps.") for a in node.names):
+                bad.append(f"{f.parent.parent.name}/{f.name}: import")
+    assert not bad, bad
+
+
+def test_V02_migration_helper_matches_runtime():
+    import importlib
+    from types import SimpleNamespace as N
+
+    from apps.quotations.services import inquiry_status_for
+
+    mig = importlib.import_module("apps.quotations.migrations.0005_rc3_v02_inquiry_quoting")
+    cases = [[], [N(status="CANCELLED", sent_at=None)], [N(status="DRAFT", sent_at=None)], [N(status="GENERATED", sent_at=None)], [N(status="SENT", sent_at=1)],
+             [N(status="LOST", sent_at=1)], [N(status="LOST", sent_at=None)], [N(status="ACCEPTED", sent_at=None), N(status="CANCELLED", sent_at=1)]]
+    for c in cases:
+        assert mig._status_for(c) == inquiry_status_for(c), c

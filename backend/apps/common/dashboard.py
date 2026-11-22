@@ -11,7 +11,7 @@ from apps.projects.scope import editable_projects, performances_for, visible_pro
 
 
 class DashboardView(APIView):
-    """按角色裁剪的工作台。销售/财务视图不包含报价金额。"""
+    """按角色裁剪的工作台。销售视图不含任何金额；财务（RC3 D-2）含报价提醒，不含合同/业绩金额。"""
 
     def get(self, request):
         u = request.user

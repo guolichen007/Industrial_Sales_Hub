@@ -79,7 +79,7 @@ class OrderSerializer(serializers.ModelSerializer):
 
 
 class OrderSafeSerializer(OrderSerializer):
-    """财务视图（D5）：无合同金额；也不暴露报价编号。"""
+    """无报价权限且无合同金额权限的视图（RC2 口径下的财务）：无合同金额；也不暴露报价编号。"""
 
     class Meta(OrderSerializer.Meta):
         fields = [f for f in OrderSerializer.Meta.fields if f not in ("contract_amount", "quote", "quote_revision", "quote_code")]

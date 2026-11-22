@@ -6,9 +6,16 @@
 from django.db import migrations, models
 
 
-def backfill(apps, schema_editor):
-    from apps.quotations.services import inquiry_status_for
+def _status_for(quotes):
+    """迁移内冻结副本（与发布时的 services.inquiry_status_for 逻辑相同）。迁移不导入运行时代码，
+    以免将来修改辅助函数导致干净空库执行历史迁移失败或结果改变。"""
+    live = [q for q in quotes if q.status != "CANCELLED"]
+    if any(q.sent_at or q.status in ("SENT", "ACCEPTED") for q in live):
+        return "QUOTED"
+    return "QUOTING" if live else "OPEN"
 
+
+def backfill(apps, schema_editor):
     Quote = apps.get_model("quotations", "Quote")
     Inquiry = apps.get_model("quotations", "Inquiry")
     AuditEvent = apps.get_model("audit", "AuditEvent")
@@ -18,7 +25,7 @@ def backfill(apps, schema_editor):
         if sent:
             Quote.objects.filter(pk=q.pk).update(sent_at=sent)
     for inq in Inquiry.objects.exclude(status="CLOSED"):
-        new = inquiry_status_for(list(Quote.objects.filter(inquiry_id=inq.id)))
+        new = _status_for(list(Quote.objects.filter(inquiry_id=inq.id)))
         if new != inq.status:
             Inquiry.objects.filter(pk=inq.pk).update(status=new)
 
