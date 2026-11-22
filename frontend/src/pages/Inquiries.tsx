@@ -38,9 +38,9 @@ function InquiryForm({ initial, onClose, onSaved }: { initial?: any; onClose: ()
         <Field label="收到日期 *"><input className="input" type="date" {...f.bind("received_on")} /></Field>
         <Field label="要求回复日期" err={f.errs.due_on}><input className="input" type="date" {...f.bind("due_on")} /></Field>
         {initial && <Field label="状态"><select className="select" {...f.bind("status")}><option value="OPEN">未关闭（按关联报价自动：当前 {initial.status === "CLOSED" ? "待重算" : initial.status_label}）</option><option value="CLOSED">已关闭</option></select></Field>}
-        <Field label="需求说明（不填价格）" full><textarea className="input textarea" {...f.bind("requirement")} /></Field>
+        <Field label="需求说明（请勿填写价格/金额，会打印在内部登记单上）" full><textarea className="input textarea" {...f.bind("requirement")} /></Field>
         <div className="formfield full">
-          <label>产品明细（型号/名称/数量/单位；价格在报价中心填写）</label>
+          <label>产品明细（型号/名称/数量/单位；价格在报价中心填写，备注中也请勿填写价格）</label>
           {items.map((it, i) => (
             <div key={i} className="rowactions" style={{ marginBottom: 4 }}>
               {["model", "name", "qty", "unit", "note"].map((k) => <input key={k} className="input" style={{ width: k === "name" || k === "note" ? 160 : 90 }} placeholder={{ model: "型号", name: "名称", qty: "数量", unit: "单位", note: "备注" }[k]} value={it[k] || ""} onChange={(e) => setItem(i, k, e.target.value)} />)}

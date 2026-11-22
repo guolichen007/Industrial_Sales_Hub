@@ -28,7 +28,7 @@ def test_C3_inquiry_pdf_content_marks_and_audit(client_for, base, make_quote):
     r = client_for("finance").get(f"/api/inquiries/{inq['id']}/pdf/")
     assert r.status_code == 200 and r["Content-Type"] == "application/pdf" and r.content.startswith(b"%PDF")
     t = re.sub(r"[ \t]+", "", _text(r.content))
-    for want in ("项目询价登记单", inq["code"], "内部询价登记单", "非对外正式报价", "不含价格", "LUB-320", "集中润滑系统", "含管路", "王工", "2026-11-18", "2026-11-25",
+    for want in ("项目询价登记单", inq["code"], "内部询价登记单", "非对外正式报价", "不含价格字段", "请人工核对其中不含价格", "LUB-320", "集中润滑系统", "含管路", "王工", "2026-11-18", "2026-11-25",
                  "斗轮机集中润滑改造", q["code"], "生成人：finance", "报价中", "第1页/共1页"):
         assert want.replace(" ", "") in t, want
     for secret in ("38888", "39000", "单价", "含税", "合计", "¥"):

@@ -256,7 +256,7 @@ function StageConfig() {
       {["DELIVERY", "PAYMENT"].map((tr) => (
         <div key={tr} style={{ marginBottom: 12 }}>
           <div className="sectionhead"><h2 style={{ fontSize: 14 }}>{tr === "DELIVERY" ? "生产/交付" : "资金状态"}</h2>{edit && <button className="btn mini soft" onClick={() => add(tr)}>+ 新增阶段</button>}</div>
-          <div className="tablewrap"><table className="data"><thead><tr><th>顺序</th><th>代码</th><th>展示名称</th><th>完结</th><th>状态</th><th>最后修改</th></tr></thead>
+          <div className="tablewrap"><table className="data"><thead><tr><th>顺序</th><th>代码</th><th>展示名称</th><th title="完结阶段为固定业务语义，不能在此修改">完结（固定）</th><th>状态</th><th>最后修改</th></tr></thead>
             <tbody>{(list || []).filter((d) => d.track === tr).map((d) => (
               <tr key={d.id}>
                 <td>{edit ? <input className="input" style={{ width: 64 }} defaultValue={d.sort} onBlur={(e) => e.target.value !== String(d.sort) && save(d, { sort: e.target.value })} /> : d.sort}</td>

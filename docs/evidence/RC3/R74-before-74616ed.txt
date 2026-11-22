@@ -1,0 +1,30 @@
+# 74616ed 独立审查反例（修复前，真实 PostgreSQL + DRF HTTP 请求）
+
+## P0-01 完整绕过链（两张有效订单，商务账号）
+["1 两单直接记完结", 409, "confirm_coverage_required"]
+["2 商务 PATCH is_final=false", 200, false]
+["3 不带确认记完结", 201, null]
+["4 PATCH 回 is_final=true", 200, true]
+["5 摘要", "已交付/完结", {"is_final": true, "covers_all_orders": false}]
+["6 事件表", 2, {"covers_all_orders": false}]
+["7 审计", "DELIVERY → COMPLETED（已交付/完结）", {"event_id": 1, "happened_on": "2026-11-22", "active_orders": 2, "covers_all_orders": false}]
+结论：第 5–7 步显示项目交付线为“已交付/完结”（is_final=true），但事件与审计均无覆盖全部合同的确认——绕过成立。
+
+## tests/test_rc3_review_74616ed.py 在 74616ed 上的结果
+E           AssertionError: ('leader', 200, b'{"id":7,"track":"DELIVERY","code":"COMPLETED","label":"\xe5\xb7\xb2\xe4\xba\xa4\xe4\xbb\x98/\xe5\xae..."active":true,"is_final":false,"used":false,"updated_by_name":"leader","updated_at":"2026-11-22T21:13:54.222271+08:00')
+E           assert 200 == 400
+E           AssertionError: ('leader', 200, b'{"id":11,"track":"PAYMENT","code":"SETTLED","label":"\xe5\xb7\xb2\xe7\xbb\x93\xe6\xb8\x85","sort":30,"active":true,"is_final":false,"used":false,"updated_by_name":"leader","updated_at":"2026-11-22T21:13:56.168871+08:00"}')
+E           assert 200 == 400
+E       assert 201 == 400
+E       KeyError: 'coverage_stale'
+E       KeyError: 'coverage_stale'
+E       KeyError: 'coverage_stale'
+E       AssertionError: assert ('排产与制造中' == '生产中'
+FAILED tests/test_rc3_review_74616ed.py::test_P0_01_is_final_tamper_cannot_bypass_coverage[DELIVERY-COMPLETED-assistant]
+FAILED tests/test_rc3_review_74616ed.py::test_P0_01_is_final_tamper_cannot_bypass_coverage[PAYMENT-SETTLED-finance]
+FAILED tests/test_rc3_review_74616ed.py::test_P0_01_new_stage_cannot_be_created_final
+FAILED tests/test_rc3_review_74616ed.py::test_P1_02_order_change_after_final_marks_coverage_stale
+FAILED tests/test_rc3_review_74616ed.py::test_P1_02_revoke_and_replace_same_count_is_stale
+FAILED tests/test_rc3_review_74616ed.py::test_P1_02_non_final_and_no_change_not_stale
+FAILED tests/test_rc3_review_74616ed.py::test_P1_03_history_keeps_snapshot_label_after_rename
+7 failed in 10.91s

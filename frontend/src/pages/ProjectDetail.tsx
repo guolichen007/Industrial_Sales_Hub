@@ -85,7 +85,7 @@ function TrackPanel({ p, onChanged }: { p: any; onChanged: () => void }) {
   const t = p.tracks || {};
   const canTrack = (tr: string) => won && can(tr === "DELIVERY" ? "delivery.write" : "payment.write");
   const finalSel = !!(stages || []).find((d: any) => d.track === form?.track && d.code === form?.code && d.is_final);
-  const needCover = finalSel && !!t.multi_order;
+  const needCover = finalSel && (!!t.multi_order || !!t.needs_reconfirmation);
   const record = async () => {
     try {
       await post(`/projects/${p.id}/tracks/`, { ...form, confirm_all_covered: needCover ? !!form.confirm_all_covered : false });
@@ -111,7 +111,7 @@ function TrackPanel({ p, onChanged }: { p: any; onChanged: () => void }) {
   const cell = (tr: string, x: any) => (
     <div className="choice" style={{ flex: 1 }}>
       <h3>{tr === "DELIVERY" ? "生产/交付" : "资金状态"}</h3>
-      {x ? <><Chip s={x.label} cls={x.is_final ? "" : "blue"} />{x.covers_all_orders && <span className="micro"> · 已确认覆盖全部合同/批次</span>}<div className="micro" style={{ marginTop: 6 }}>发生：{dt(x.happened_on)} ｜ 记录：{x.created_by_name} {dt(x.created_at, true)}</div>
+      {x ? <><Chip s={x.label} cls={x.is_final ? "" : "blue"} />{x.coverage_stale ? <span className="micro" style={{ color: "#b55c5c" }}> · 完结确认已失效（合同/订单已变化）</span> : x.covers_all_orders && <span className="micro"> · 已确认覆盖全部合同/批次</span>}<div className="micro" style={{ marginTop: 6 }}>发生：{dt(x.happened_on)} ｜ 记录：{x.created_by_name} {dt(x.created_at, true)}</div>
         {x.public_note && <div className="sub">{x.public_note}</div>}{x.private_note && <div className="micro" style={{ color: "#8a5a12" }}>内部：{x.private_note}</div>}</> : <div className="sub">尚无记录</div>}
       {canTrack(tr) && <button className="btn mini soft" style={{ marginTop: 6 }} onClick={() => setForm({ track: tr, code: "", happened_on: new Date().toISOString().slice(0, 10), public_note: "", private_note: "" })}>+ 记录{tr === "DELIVERY" ? "交付" : "资金"}状态</button>}
     </div>
@@ -119,6 +119,7 @@ function TrackPanel({ p, onChanged }: { p: any; onChanged: () => void }) {
   return (
     <div className="card cardpad">
       <div className="sectionhead"><h2>交付与资金状态（项目总体）</h2><small>两条状态线互不覆盖 · 不含任何金额{t.delivery_overdue && <b style={{ color: "#b55c5c" }}> · 交付已逾期</b>}</small></div>
+      {t.needs_reconfirmation && <div className="warnnote" style={{ marginBottom: 8, borderColor: "#b55c5c" }}><b>完结确认已失效：</b>记录完结后合同/订单发生了变化（新增、撤销或替换）。当前“已交付/已结清”不代表已覆盖全部合同，请商务/财务核实后重新记录并确认覆盖。</div>}
       {t.multi_order && <div className="warnnote" style={{ marginBottom: 8 }}>本项目有 {t.active_order_count} 张有效合同/订单。下面是<b>项目总体状态</b>，不是每张合同或每个批次各自的状态；各合同/批次的差异请写在说明中。</div>}
       {!won ? <div className="sub">中标确认/转交商务后开始记录。</div> : <div className="rowactions" style={{ alignItems: "stretch" }}>{cell("DELIVERY", t.delivery)}{cell("PAYMENT", t.payment)}</div>}
       {won && <button className="btn mini" style={{ marginTop: 8 }} onClick={() => get<any>(`/projects/${p.id}/tracks/`).then((d) => setHist(d.events)).catch(fail)}>状态历史</button>}
@@ -127,7 +128,7 @@ function TrackPanel({ p, onChanged }: { p: any; onChanged: () => void }) {
           <table className="data"><thead><tr><th>状态线</th><th>阶段</th><th>发生日期</th><th>记录人 / 系统时间</th><th>说明</th><th /></tr></thead>
             <tbody>{hist.map((ev) => (
               <tr key={ev.id} style={ev.reverted_at ? { textDecoration: "line-through", opacity: 0.6 } : undefined}>
-                <td>{ev.track === "DELIVERY" ? "交付" : "资金"}</td><td>{ev.label}{ev.covers_all_orders && <div className="micro">已确认覆盖全部 {ev.active_orders_at} 张合同/订单</div>}</td><td>{dt(ev.happened_on)}</td><td className="micro">{ev.created_by_name} {dt(ev.created_at, true)}</td>
+                <td>{ev.track === "DELIVERY" ? "交付" : "资金"}</td><td>{ev.label}{ev.current_label && ev.current_label !== ev.label && <div className="micro">现名：{ev.current_label}</div>}{ev.covers_all_orders && <div className="micro">已确认覆盖全部 {ev.active_orders_at} 张合同/订单</div>}</td><td>{dt(ev.happened_on)}</td><td className="micro">{ev.created_by_name} {dt(ev.created_at, true)}</td>
                 <td className="micro">{ev.public_note}{ev.private_note && <div>内部：{ev.private_note}</div>}{ev.reverted_at && <div>已撤销：{ev.reverted_by_name} {ev.revert_reason || ""}</div>}</td>
                 <td>{!ev.reverted_at && canTrack(ev.track) && <button className="btn mini" onClick={() => revert(ev)}>撤销</button>}</td>
               </tr>

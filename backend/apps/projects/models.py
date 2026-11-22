@@ -145,6 +145,8 @@ class TrackEvent(models.Model):
     # RC3 收口 D-5：状态线是“项目总体状态”。项目有多张有效合同/订单时，记录完结类阶段须确认已覆盖全部合同/批次
     active_orders_at = models.PositiveIntegerField("记录时有效合同/订单数", default=0)
     covers_all_orders = models.BooleanField("已确认覆盖全部合同/批次", default=False)
+    # 74616ed 审查 P1-02：记录时的有效合同/订单 ID 集合；之后集合变化（新增、撤销、替换）则该完结状态的覆盖“已失效，需重新确认”
+    covered_order_ids = models.JSONField("记录时的有效合同/订单 ID", default=list, blank=True)
 
     class Meta:
         ordering = ["-happened_on", "-id"]

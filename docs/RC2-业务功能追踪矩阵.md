@@ -1,6 +1,8 @@
 # 业务功能追踪矩阵（RC2 基线 + RC3 增补，2.1.0-rc3）
 
-> RC3 新增需求（两板块审计 F01–F15）见文末第 7 节；第 1–6 节为 RC2 原文，RC3 未使其中任何“已完成”条目回退（后端 292 基线 + E2E 72 基线全部保留通过）。
+> **口径提示**：第 1–6 节为 RC2 历史基线原文，其中关于财务的描述（如“财务无报价/无金额”“D5”）是**旧口径**。
+> 当前授权以 `RC3-业务角色与字段矩阵.md` 与 2026-11-22 负责人决策 D-1～D-7 为准：财务默认可使用报价中心，但不得读写合同金额与业绩内部金额、不得签收模板。
+> RC3 新增需求（两板块审计 F01–F15、收口 C1～C4）见文末第 7 节；RC3 未使第 1–6 节中任何“已完成”条目回退（后端 292 基线 + E2E 72 基线全部保留通过）。
 
 > 对照甲方原始需求（PRD 01、开发执行任务书 03、交互原型 02、评审稿 04、二轮确认表 05、G0/V2.1-LAN 决策记录）与 RC2 代码逐条核对。
 > RC1 基线由独立只读分析得出（134 条），RC2 更新的条目在“状态”列标注“（RC2）”。证据路径：后端相对 `backend/apps/`，前端相对 `frontend/src/`，测试相对 `backend/tests/`。
@@ -283,7 +285,7 @@
 |---|---|---|---|---|---|
 | R3-01 | 首层只有商务工作区 / 销售工作区（技术设置在页尾） | 已完成 | `accounts/views.py`（caps） | `App.tsx` BUSINESS_NAV/SALES_NAV/TECH_NAV | E2E “RC3 … 工作区” |
 | R3-02 | 中标确认/转交，可早于合同；中标后销售只读 | 已完成 | `projects/views.py` handoff/handoff_revert；`projects/scope.py::assert_sales_writable` | `ProjectDetail.tsx` 中标按钮、只读标识 | `test_rc3_g1_handoff.py`、E2E |
-| R3-03 | 财务进入商务板块（项目、询价、业绩非金额字段、状态线） | 已完成（口径开关） | `common/roles.py` effective_roles；`settings.py` FINANCE_SCOPE/FINANCE_QUOTE | 菜单按 caps | 请求矩阵 M01–M15、T06/T07 |
+| R3-03 | 财务进入商务板块（项目、询价、报价中心〔D-2，不含合同/业绩金额〕、业绩非金额字段、状态线） | 已完成（口径开关） | `common/roles.py` effective_roles；`settings.py` FINANCE_SCOPE/FINANCE_QUOTE | 菜单按 caps | 请求矩阵 M01–M15、T06/T07 |
 | R3-04 | 询价登记（不含价格）与报价关联 | 已完成；词义待甲方确认（D-1） | `quotations/models.py::Inquiry`、`InquiryViewSet` | `pages/Inquiries.tsx` | T06、E2E |
 | R3-05 | 生产/交付与资金两条状态线，资金不记金额 | 已完成 | `projects/models.py` StageDef/TrackEvent；`views.py` tracks/track_summary | `TrackPanel` | T08/T09、E2E |
 | R3-06 | 阶段中文名/顺序/停用可配置，历史不丢 | 已完成 | `StageDefViewSet` | `Settings.tsx` StageConfig | T10 |
@@ -294,6 +296,7 @@
 | R3-11 | 发生时间 vs 录入时间 | 已完成 | `UpdateSerializer.validate_happened_at`；`created_at` 只读 | “发生 … · 录入于 …” | T15 |
 | R3-12 | 项目操作记录（按角色裁剪），创建/修改人显示 | 已完成 | `projects/views.py::activity` | `ActivityPanel`、项目/业绩/询价页 | T16、E2E |
 | R3-13 | 安装器保留手工 HTTPS 规则、3010 续装、多网卡 IP、HTTPS 不开 HTTP 页 | 代码完成；**Windows 实机未验证** | `deploy/windows/scripts/install.ps1`、`common.ps1`、`uninstall.ps1`、`start.ps1`、`check.ps1` | — | `unit-rc3.ps1`、`unit-rc3-vc.ps1`；实机见 RC3 手册 |
-| R3-14 | 同一项目多订单/分批交付 | **后置**（D-5） | — | — | — |
+| R3-14 | 同一项目多订单/分批交付 | 首期按项目总体状态 + 多合同提示 + 完结覆盖确认（失效提示）；逐订单履约**后置**（D-5） | `track_summary`、`TrackEvent.covered_order_ids` | 状态面板 | `test_rc3_closeout_c4.py`、`test_rc3_review_74616ed.py` |
 | R3-15 | 不做完整 ERP/财务总账、不接公网/云 | 明确不做 | — | — | — |
-
+| R3-16 | 内部《项目询价登记单》PDF（D-7） | 已完成 | `quotations/inquiry_pdf.py`、`InquiryViewSet.pdf` | 询价列表“登记单 PDF” | `test_rc3_closeout_c3.py` |
+| R3-17 | 内部业绩 PDF 默认仅已确认（D-6） | 已完成 | `PerformanceViewSet.export_pdf`（`export_status`） | 导出状态下拉 | `test_rc3_closeout_c2.py` |

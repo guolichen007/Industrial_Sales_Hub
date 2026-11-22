@@ -62,7 +62,8 @@
 | 询价明细 | — | 读写 | 读写 | 403 | 读写；**任何价格/金额键被拒绝** |
 | 询价 `quote_codes`（关联报价编号） | — | 读 | 读 | 403 | 读（只有编号，不含金额） |
 | 询价 `status` | — | 自动计算；人工仅关闭/重新打开 | 同左 | 403 | 同左（待报价 → 报价中〔有未作废的关联报价〕→ 已报价〔关联报价已标记发送〕；已关闭不被自动改写） |
-| 状态线 `scope`/`active_order_count`/`multi_order`、事件 `active_orders_at`/`covers_all_orders` | — | 读 | 读 | 读 | 读（D-5：项目总体状态；多合同完结须确认覆盖，留痕） |
+| 状态线 `scope`/`active_order_count`/`multi_order`/`needs_reconfirmation`/`coverage_stale`、事件 `active_orders_at`/`covers_all_orders`/`covered_order_ids` | — | 读 | 读 | 读 | 读（D-5：项目总体状态；多合同完结须确认覆盖并留痕；之后合同/订单集合变化则覆盖失效、提示重新确认） |
+| 阶段 `is_final`（完结属性） | — | 只读 | 只读 | 只读 | 只读（固定业务语义，阶段配置只能改名称/排序/启停） |
 | 状态线撤销原因 `revert_reason` | — | 读 | 交付线读；资金线不返回 | 不返回 | 读（进展流只记“录错已撤销，原因见状态历史”） |
 
 ## 4. 前端按钮（按 `/auth/me` 的 caps 与对象 `can_edit` 显示；被绕过时服务端仍 403）

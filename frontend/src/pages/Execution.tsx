@@ -155,6 +155,7 @@ function ExecCard({ p }: { p: any }) {
         <div className="micro" style={{ marginBottom: 6 }}>
           项目总体状态：生产/交付 <b>{d.tracks.delivery?.label || "—"}</b> ｜ 资金 <b>{d.tracks.payment?.label || "—"}</b>
           {d.tracks.multi_order && <span style={{ color: "#8a5a12" }}>（本项目 {d.tracks.active_order_count} 张有效合同/订单，非各合同各自状态）</span>}
+          {d.tracks.needs_reconfirmation && <b style={{ color: "#b55c5c" }}> · 完结确认已失效，需重新确认</b>}
         </div>
       )}
       {d ? (d.milestones.length ? (

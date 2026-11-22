@@ -1,4 +1,4 @@
-"""显式导入出具主体真实配置（安装端执行，不随安装自动运行）。
+r"""显式导入出具主体真实配置（安装端执行，不随安装自动运行）。
 
 用法：python manage.py import_entity_config <真实配置.json> --authorized-by <负责人用户名> [--dry-run]
 

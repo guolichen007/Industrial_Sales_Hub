@@ -14,7 +14,7 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 from apps.common.pdfkit import make_numbered_canvas, mx, register_fonts
 
 INQUIRY_ITEM_FIELDS = ("model", "name", "qty", "unit", "note")
-INQUIRY_MARK = "内部询价登记单 · 非对外正式报价 · 不含价格"
+INQUIRY_MARK = "内部询价登记单 · 非对外正式报价 · 不含价格字段"
 
 
 def inquiry_snapshot(inq) -> dict:
@@ -45,7 +45,8 @@ def render_inquiry_pdf(snap: dict, generator: str, generated_at: str) -> bytes:
                             title=f"项目询价登记单 {snap['code']}", author=generator, subject="INTERNAL-询价登记", creator="Industrial Sales Hub", producer="Industrial Sales Hub", invariant=1)
     W = A4[0] - 32 * mm
     story = [Paragraph(mx("项目询价登记单", True), h1), Spacer(1, 1.5 * mm),
-             Paragraph(mx(f"【{INQUIRY_MARK}】本单记录客户/主机厂的询价需求，用于内部登记与查询；对客户报价请以报价中心生成的正式报价单为准。"), warn),
+             Paragraph(mx(f"【{INQUIRY_MARK}】本单记录客户/主机厂的询价需求，用于内部登记与查询；对客户报价请以报价中心生成的正式报价单为准。"
+                          "本单不含结构化价格字段；“需求说明”“备注”为人工填写的文字，外发前请人工核对其中不含价格。"), warn),
              Spacer(1, 4 * mm)]
     info = [["询价编号", snap["code"], "状态", snap["status"]],
             ["项目", snap["project"], "关联报价编号", "、".join(snap["quote_codes"]) or "—"],
