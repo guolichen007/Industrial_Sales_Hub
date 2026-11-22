@@ -1,0 +1,7 @@
+# C3 反例（02b5464，修复前）：GET /api/inquiries/{id}/pdf/ 不存在（404），无询价登记单输出
+E       assert (404 == 200)
+E           AssertionError: leader
+E           assert 404 == 200
+FAILED tests/test_rc3_closeout_c3.py::test_C3_inquiry_pdf_content_marks_and_audit
+FAILED tests/test_rc3_closeout_c3.py::test_C3_closed_inquiry_still_downloadable_and_roles
+FAILED tests/test_rc3_closeout_c3.py::test_C3_whitelist_snapshot_only - Impor...

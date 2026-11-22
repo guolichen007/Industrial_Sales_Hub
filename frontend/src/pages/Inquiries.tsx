@@ -81,7 +81,7 @@ export default function Inquiries() {
                     <td><b>{x.code}</b></td><td><Link to={`/projects/${x.project}`}>{x.project_name}</Link></td><td>{x.inquirer_name || "—"}</td>
                     <td>{dt(x.received_on)}</td><td>{x.due_on ? dt(x.due_on) : "—"}</td><td><Chip s={x.status_label} /></td><td className="micro">{x.quote_codes.join("、") || "—"}</td>
                     <td className="micro">{x.created_by_name} {dt(x.created_at, true)}<br />{x.updated_by_name} {dt(x.updated_at, true)}</td>
-                    <td className="rowactions">{can("inquiry.write") && <button className="btn mini" onClick={() => setModal(x)}>编辑</button>}</td>
+                    <td className="rowactions"><a className="btn mini" href={`/api/inquiries/${x.id}/pdf/?inline=1`} target="_blank" rel="noreferrer" title="内部询价登记单（不含价格，非对外报价）">登记单 PDF</a>{can("inquiry.write") && <button className="btn mini" onClick={() => setModal(x)}>编辑</button>}</td>
                   </tr>
                 ))}
                 {rows.length === 0 && <tr><td colSpan={9} className="empty-cell">暂无询价</td></tr>}

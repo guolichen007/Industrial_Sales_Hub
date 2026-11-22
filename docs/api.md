@@ -40,6 +40,7 @@
 | GET/POST/PATCH | `projects/{id}/milestones/…` | 同上 | LE AS FI | 延期须填原因 |
 | GET | `projects/{id}/related/` | 同上 | — | 关联报价/订单/业绩，按角色裁剪 |
 | GET/POST/PATCH | `inquiries/` | LE AS FI | LE AS FI | RC3：询价登记（不含价格；明细中价格/金额键被拒绝）；返回关联报价编号。状态 待报价/报价中/已报价 由关联报价自动计算（已报价 = 关联报价已标记发送），人工只能 `OPEN`（重新打开）/`CLOSED` |
+| GET | `inquiries/{id}/pdf/` | LE AS FI | — | RC3 收口 D-7：内部《项目询价登记单》PDF（只读该询价记录，不含价格；已关闭可下载；`?inline=1` 预览；写审计含 SHA256） |
 | POST | `projects/{id}/handoff/` `projects/{id}/handoff/revert/` | — | LE AS / 仅 LE | RC3：中标确认转交（锁定销售写入）/ 撤销中标 |
 | GET/POST | `projects/{id}/tracks/` | 业务角色（SA 无 private_note） | 交付线 LE AS FI；资金线 LE FI | RC3：生产交付/资金两条状态线，不含金额 |
 | POST | `projects/{id}/tracks/{eid}/revert/` | — | 同上 | 撤销录错的状态事件（只标记不删除） |

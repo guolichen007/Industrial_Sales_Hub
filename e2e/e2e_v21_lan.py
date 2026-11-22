@@ -229,6 +229,11 @@ with sync_playwright() as pw:
     pfi.wait_for_selector(f"text={inq['code']}")
     row = pfi.locator(f"tr:has-text('{inq['code']}')").inner_text()
     check("RC3-V02 关联报价草稿后询价显示“报价中”（不是已报价）", s == 201 and "报价中" in row and "已报价" not in row, (s, row))
+    check("RC3 D-7 询价行有“登记单 PDF”按钮", pfi.locator(f"tr:has-text('{inq['code']}') >> text=登记单 PDF").count() == 1)
+    ri = pfi.request.get(f"{BASE}/api/inquiries/{inq['id']}/pdf/")
+    check("RC3 D-7 财务下载询价登记单 PDF（不含价格）", ri.status == 200 and ri.body().startswith(b"%PDF") and len(ri.headers.get("x-content-sha256", "")) == 64, ri.status)
+    rs = ps.request.get(f"{BASE}/api/inquiries/{inq['id']}/pdf/")
+    check("RC3 D-7 销售下载询价登记单 403", rs.status == 403, rs.status)
     s, _ = api(ps, "GET", "/inquiries/")
     check("RC3 销售访问询价 403", s == 403, s)
     # 中标确认（早于合同）：商务在项目页点击按钮 → 销售写入锁定

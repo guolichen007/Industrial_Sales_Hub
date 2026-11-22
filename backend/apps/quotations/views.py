@@ -513,6 +513,29 @@ class InquiryViewSet(viewsets.ModelViewSet):
         o = create_with_code(next_code, lambda code: s.save(code=code, created_by=self.request.user, updated_by=self.request.user), serializer=s)
         audit(self.request, "create", "inquiry", o.id, f"登记询价 {o.code}（{o.project.name}）")
 
+    @action(detail=True, methods=["get"])
+    def pdf(self, request, pk=None):
+        """RC3 收口 C3（D-7）：内部《项目询价登记单》PDF（只读当前询价记录，不含价格；已关闭的历史询价也可下载）。
+        权限同询价读取（inquiry.read）；每次生成写审计（操作人、服务器时间、对象 ID、PDF SHA256）。"""
+        from urllib.parse import quote as urlquote
+
+        from django.http import HttpResponse
+
+        from apps.common.pdfkit import sha256_bytes
+
+        from .inquiry_pdf import inquiry_snapshot, render_inquiry_pdf
+
+        inq = self.get_object()
+        now = timezone.localtime().strftime("%Y-%m-%d %H:%M")
+        data = render_inquiry_pdf(inquiry_snapshot(inq), request.user.name, now)
+        digest = sha256_bytes(data)
+        audit(request, "export_pdf", "inquiry", inq.id, f"生成询价登记单 PDF {inq.code}", {"pdf_sha256": digest, "status": inq.status})
+        resp = HttpResponse(data, content_type="application/pdf")
+        disp = "inline" if request.query_params.get("inline") == "1" else "attachment"
+        resp["Content-Disposition"] = f"{disp}; filename=\"inquiry-{inq.code}.pdf\"; filename*=UTF-8''{urlquote(f'询价登记单-{inq.code}.pdf')}"
+        resp["X-Content-SHA256"] = digest
+        return resp
+
     def perform_update(self, s):
         o = s.save(updated_by=self.request.user)
         services.sync_inquiry_status(o)  # 重新打开（OPEN）时按关联报价重算为待报价/报价中/已报价
