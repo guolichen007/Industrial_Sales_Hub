@@ -8,7 +8,7 @@ from rest_framework.response import Response
 
 from apps.audit.service import audit
 from apps.common.errors import BusinessError
-from apps.common.params import int_param, str_param
+from apps.common.params import bool_param, int_param, str_param
 from apps.common.roles import SALES, HasCap, can, role_of
 
 from .models import EXECUTION_PHASES, MILESTONE_STAGES, PRESALE_PHASES, ExecutionMilestone, Project, ProjectParty, ProjectUpdate, StageDef, TrackEvent
@@ -476,14 +476,21 @@ class ProjectViewSet(viewsets.ModelViewSet):
         s.is_valid(raise_exception=True)
         if s.validated_data["happened_on"] > timezone.localdate():
             raise serializers.ValidationError({"happened_on": "发生日期不能晚于今天"})
-        ev = s.save(project=project, created_by=request.user, label_snapshot=d.label)
+        # RC3 收口 D-5：两条状态线是项目总体状态；多张有效合同/订单时，“已交付/完结”“已结清”等完结阶段须人工确认已覆盖全部合同/批次
+        n_orders = project.orders.filter(status="CONFIRMED").count()
+        covers = bool_param(request.data.get("confirm_all_covered", False))
+        if d.is_final and n_orders > 1 and not covers:
+            raise BusinessError(f"本项目有 {n_orders} 张有效合同/订单，状态线记录的是项目总体状态。记录“{d.label}”前请确认已覆盖全部合同/批次（confirm_all_covered）。",
+                                code="confirm_coverage_required", http_status=409)
+        ev = s.save(project=project, created_by=request.user, label_snapshot=d.label, active_orders_at=n_orders, covers_all_orders=bool(d.is_final and n_orders > 1 and covers))
         project.updated_by = request.user
         project.save(update_fields=["updated_by", "updated_at"])
         ProjectUpdate.objects.create(project=project, stream=ProjectUpdate.EXECUTION, title=f"{'生产/交付' if track == 'DELIVERY' else '资金状态'}：{d.label}",
                                      # 进展流只带公开说明：内部说明只保存在 TrackEvent，由 track_summary/TrackEventSerializer 按写权限裁剪
                                      # （否则商务可经进展流读到资金线内部说明）
                                      content=ev.public_note, public_content=ev.public_note, phase=code, happened_at=timezone.now(), created_by=request.user)
-        audit(request, "track_event", "project", project.id, f"{track} → {code}（{d.label}）", {"event_id": ev.id, "happened_on": str(ev.happened_on)})
+        audit(request, "track_event", "project", project.id, f"{track} → {code}（{d.label}）" + (f"；已确认覆盖全部 {n_orders} 张合同/订单" if ev.covers_all_orders else ""),
+              {"event_id": ev.id, "happened_on": str(ev.happened_on), "active_orders": n_orders, "covers_all_orders": ev.covers_all_orders})
         return Response({"summary": track_summary(project, request.user), "event": TrackEventSerializer(ev, context={"request": request}).data}, status=201)
 
     @action(detail=True, methods=["post"], url_path=r"tracks/(?P<eid>\d+)/revert")
@@ -592,10 +599,16 @@ def track_summary(project, user):
             continue
         d = defs.get(ev.code)
         item = {"code": ev.code, "label": d.label if d else ev.label_snapshot, "is_final": bool(d and d.is_final), "happened_on": ev.happened_on,
-                "created_at": ev.created_at, "created_by_name": ev.created_by.name if ev.created_by else "", "public_note": ev.public_note}
+                "created_at": ev.created_at, "created_by_name": ev.created_by.name if ev.created_by else "", "public_note": ev.public_note,
+                "covers_all_orders": ev.covers_all_orders}
         if can(user, cap):
             item["private_note"] = ev.private_note
         out[track.lower()] = item
+    # RC3 收口 D-5：明确“项目总体状态”，多合同时提示（不是每张合同/每个批次各自的状态）
+    n = project.orders.filter(status="CONFIRMED").count()
+    out["scope"] = "PROJECT"
+    out["active_order_count"] = n
+    out["multi_order"] = n > 1
     due = project.delivery_due_on
     final = out.get("delivery") and out["delivery"]["is_final"]
     out["delivery_overdue"] = bool(due and not final and due < timezone.localdate())
@@ -609,8 +622,9 @@ class TrackEventSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = TrackEvent
-        fields = ["id", "track", "code", "label", "label_snapshot", "happened_on", "created_at", "created_by_name", "public_note", "private_note", "reverted_at", "reverted_by_name", "revert_reason"]
-        read_only_fields = ["label_snapshot", "created_at", "reverted_at", "revert_reason"]
+        fields = ["id", "track", "code", "label", "label_snapshot", "happened_on", "created_at", "created_by_name", "public_note", "private_note", "reverted_at", "reverted_by_name", "revert_reason",
+                  "active_orders_at", "covers_all_orders"]
+        read_only_fields = ["label_snapshot", "created_at", "reverted_at", "revert_reason", "active_orders_at", "covers_all_orders"]
 
     def get_label(self, obj):
         d = StageDef.objects.filter(track=obj.track, code=obj.code).first()

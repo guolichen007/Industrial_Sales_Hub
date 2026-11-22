@@ -142,6 +142,9 @@ class TrackEvent(models.Model):
     reverted_at = models.DateTimeField(null=True, blank=True)
     reverted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     revert_reason = models.CharField(max_length=200, blank=True)
+    # RC3 收口 D-5：状态线是“项目总体状态”。项目有多张有效合同/订单时，记录完结类阶段须确认已覆盖全部合同/批次
+    active_orders_at = models.PositiveIntegerField("记录时有效合同/订单数", default=0)
+    covers_all_orders = models.BooleanField("已确认覆盖全部合同/批次", default=False)
 
     class Meta:
         ordering = ["-happened_on", "-id"]

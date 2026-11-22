@@ -151,6 +151,12 @@ function ExecCard({ p }: { p: any }) {
         <div><Link className="link" to={`/projects/${p.id}`} style={{ fontWeight: 750 }}>{p.name}</Link> <span className="micro">{p.code} · {p.sales_owner_name}</span></div>
         <Chip s={p.execution_phase} />
       </div>
+      {d?.tracks && (d.tracks.delivery || d.tracks.payment) && (
+        <div className="micro" style={{ marginBottom: 6 }}>
+          项目总体状态：生产/交付 <b>{d.tracks.delivery?.label || "—"}</b> ｜ 资金 <b>{d.tracks.payment?.label || "—"}</b>
+          {d.tracks.multi_order && <span style={{ color: "#8a5a12" }}>（本项目 {d.tracks.active_order_count} 张有效合同/订单，非各合同各自状态）</span>}
+        </div>
+      )}
       {d ? (d.milestones.length ? (
         <div className="progress-rail">
           {d.milestones.map((m: any) => <div key={m.id} className={"progress-tile " + (m.state === "DONE" ? "done" : m.state === "IN_PROGRESS" || m.state === "DELAYED" ? "current" : "")} title={m.note}>{m.stage}<br />{msLabel(m.state)}</div>)}

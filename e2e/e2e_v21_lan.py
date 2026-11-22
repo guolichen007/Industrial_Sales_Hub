@@ -447,6 +447,15 @@ with sync_playwright() as pw:
     check("RC3 内部 PDF 不产生对外案例记录", len(rels2) == 1, rels2)
     s, _ = api(p3, "GET", f"/performances/export-pdf/?ids={perfs[0]['id']}")
     check("RC3 其他销售不能按 ID 指定业绩（400）", s == 400, s)
+    # RC3 D-5：第二张合同后，项目页提示“项目总体状态”，完结须确认覆盖全部合同
+    s, o2 = api(pl, "POST", "/order-confirmations/", {"project": pid, "legal_entity": ents[0]["id"], "basis": "CONTRACT", "order_ref": "HT-LAN-002", "confirm_now": True})
+    s1, d1 = api(pas, "POST", f"/projects/{pid}/tracks/", {"track": "DELIVERY", "code": "COMPLETED"})
+    check("RC3 D-5 两张合同时未确认覆盖不能记录完结（409）", s == 201 and s1 == 409 and (d1 or {}).get("code") == "confirm_coverage_required", (s, s1, d1))
+    ps.goto(f"{BASE}/projects/{pid}")
+    ps.wait_for_selector("text=交付与资金状态（项目总体）")
+    check("RC3 D-5 销售页面提示多合同项目总体状态", "项目总体状态" in ps.inner_text("body") and "2 张有效合同" in ps.inner_text("body"))
+    s2, d2 = api(pas, "POST", f"/projects/{pid}/tracks/", {"track": "DELIVERY", "code": "COMPLETED", "confirm_all_covered": True})
+    check("RC3 D-5 确认覆盖全部合同后记录完结并留痕", s2 == 201 and d2["event"]["covers_all_orders"] is True, (s2, d2))
     s, me_p = api(pl, "GET", f"/projects/{pid}/")
     check("RC3 合同确认后仍保持中标锁定（成交、sales_locked_at）", me_p["presale_phase"] == "成交" and me_p["sales_locked_at"], me_p.get("presale_phase"))
 

@@ -84,9 +84,11 @@ function TrackPanel({ p, onChanged }: { p: any; onChanged: () => void }) {
   const won = !!p.sales_locked_at;
   const t = p.tracks || {};
   const canTrack = (tr: string) => won && can(tr === "DELIVERY" ? "delivery.write" : "payment.write");
+  const finalSel = !!(stages || []).find((d: any) => d.track === form?.track && d.code === form?.code && d.is_final);
+  const needCover = finalSel && !!t.multi_order;
   const record = async () => {
     try {
-      await post(`/projects/${p.id}/tracks/`, form);
+      await post(`/projects/${p.id}/tracks/`, { ...form, confirm_all_covered: needCover ? !!form.confirm_all_covered : false });
       notify("状态已记录");
       setForm(null);
       setHist(null);
@@ -109,14 +111,15 @@ function TrackPanel({ p, onChanged }: { p: any; onChanged: () => void }) {
   const cell = (tr: string, x: any) => (
     <div className="choice" style={{ flex: 1 }}>
       <h3>{tr === "DELIVERY" ? "生产/交付" : "资金状态"}</h3>
-      {x ? <><Chip s={x.label} cls={x.is_final ? "" : "blue"} /><div className="micro" style={{ marginTop: 6 }}>发生：{dt(x.happened_on)} ｜ 记录：{x.created_by_name} {dt(x.created_at, true)}</div>
+      {x ? <><Chip s={x.label} cls={x.is_final ? "" : "blue"} />{x.covers_all_orders && <span className="micro"> · 已确认覆盖全部合同/批次</span>}<div className="micro" style={{ marginTop: 6 }}>发生：{dt(x.happened_on)} ｜ 记录：{x.created_by_name} {dt(x.created_at, true)}</div>
         {x.public_note && <div className="sub">{x.public_note}</div>}{x.private_note && <div className="micro" style={{ color: "#8a5a12" }}>内部：{x.private_note}</div>}</> : <div className="sub">尚无记录</div>}
       {canTrack(tr) && <button className="btn mini soft" style={{ marginTop: 6 }} onClick={() => setForm({ track: tr, code: "", happened_on: new Date().toISOString().slice(0, 10), public_note: "", private_note: "" })}>+ 记录{tr === "DELIVERY" ? "交付" : "资金"}状态</button>}
     </div>
   );
   return (
     <div className="card cardpad">
-      <div className="sectionhead"><h2>交付与资金状态</h2><small>两条状态线互不覆盖 · 不含任何金额{t.delivery_overdue && <b style={{ color: "#b55c5c" }}> · 交付已逾期</b>}</small></div>
+      <div className="sectionhead"><h2>交付与资金状态（项目总体）</h2><small>两条状态线互不覆盖 · 不含任何金额{t.delivery_overdue && <b style={{ color: "#b55c5c" }}> · 交付已逾期</b>}</small></div>
+      {t.multi_order && <div className="warnnote" style={{ marginBottom: 8 }}>本项目有 {t.active_order_count} 张有效合同/订单。下面是<b>项目总体状态</b>，不是每张合同或每个批次各自的状态；各合同/批次的差异请写在说明中。</div>}
       {!won ? <div className="sub">中标确认/转交商务后开始记录。</div> : <div className="rowactions" style={{ alignItems: "stretch" }}>{cell("DELIVERY", t.delivery)}{cell("PAYMENT", t.payment)}</div>}
       {won && <button className="btn mini" style={{ marginTop: 8 }} onClick={() => get<any>(`/projects/${p.id}/tracks/`).then((d) => setHist(d.events)).catch(fail)}>状态历史</button>}
       {hist && (
@@ -124,7 +127,7 @@ function TrackPanel({ p, onChanged }: { p: any; onChanged: () => void }) {
           <table className="data"><thead><tr><th>状态线</th><th>阶段</th><th>发生日期</th><th>记录人 / 系统时间</th><th>说明</th><th /></tr></thead>
             <tbody>{hist.map((ev) => (
               <tr key={ev.id} style={ev.reverted_at ? { textDecoration: "line-through", opacity: 0.6 } : undefined}>
-                <td>{ev.track === "DELIVERY" ? "交付" : "资金"}</td><td>{ev.label}</td><td>{dt(ev.happened_on)}</td><td className="micro">{ev.created_by_name} {dt(ev.created_at, true)}</td>
+                <td>{ev.track === "DELIVERY" ? "交付" : "资金"}</td><td>{ev.label}{ev.covers_all_orders && <div className="micro">已确认覆盖全部 {ev.active_orders_at} 张合同/订单</div>}</td><td>{dt(ev.happened_on)}</td><td className="micro">{ev.created_by_name} {dt(ev.created_at, true)}</td>
                 <td className="micro">{ev.public_note}{ev.private_note && <div>内部：{ev.private_note}</div>}{ev.reverted_at && <div>已撤销：{ev.reverted_by_name} {ev.revert_reason || ""}</div>}</td>
                 <td>{!ev.reverted_at && canTrack(ev.track) && <button className="btn mini" onClick={() => revert(ev)}>撤销</button>}</td>
               </tr>
@@ -133,13 +136,19 @@ function TrackPanel({ p, onChanged }: { p: any; onChanged: () => void }) {
       )}
       {form && (
         <Modal title={form.track === "DELIVERY" ? "记录生产/交付状态" : "记录资金状态（只记状态，不记金额）"} onClose={() => setForm(null)}
-          foot={<><button className="btn" onClick={() => setForm(null)}>取消</button><button className="btn primary" disabled={!form.code} onClick={record}>保存</button></>}>
+          foot={<><button className="btn" onClick={() => setForm(null)}>取消</button><button className="btn primary" disabled={!form.code || (needCover && !form.confirm_all_covered)} onClick={record}>保存</button></>}>
           <div className="fieldset">
             <Field label="阶段 *"><select className="select" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })}><option value="">请选择</option>
               {(stages || []).filter((d) => d.track === form.track && d.active).map((d) => <option key={d.code} value={d.code}>{d.label}</option>)}</select></Field>
             <Field label="发生日期"><input className="input" type="date" value={form.happened_on} onChange={(e) => setForm({ ...form, happened_on: e.target.value })} /></Field>
             <Field label="销售可见说明（勿填金额）" full><input className="input" value={form.public_note} onChange={(e) => setForm({ ...form, public_note: e.target.value })} /></Field>
             <Field label="内部说明（销售不可见）" full><input className="input" value={form.private_note} onChange={(e) => setForm({ ...form, private_note: e.target.value })} /></Field>
+            {needCover && (
+              <label className="formfield full" style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                <input type="checkbox" checked={!!form.confirm_all_covered} onChange={(e) => setForm({ ...form, confirm_all_covered: e.target.checked })} />
+                <span>本项目有 {t.active_order_count} 张有效合同/订单。我确认“{(stages || []).find((d: any) => d.track === form.track && d.code === form.code)?.label}”已覆盖<b>全部</b>合同/批次（将记录操作人与时间）。</span>
+              </label>
+            )}
           </div>
         </Modal>
       )}
