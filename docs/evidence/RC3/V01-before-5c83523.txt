@@ -1,0 +1,5 @@
+# V-01 反例（5c83523，修复前）：资金线撤销原因经 /updates/ 到达无 payment.write 的商务（assistant）
+# 期望：仅该线写权限角色在 /tracks/ 中可见；字典列出实际可见位置与期望不符的角色
+E       AssertionError: {'leader': ['/api/projects/{id}/updates/', '/api/projects/{id}/tracks/'], 'assistant': ['/api/projects/{id}/updates/'], 'finance': ['/api/projects/{id}/updates/', '/api/projects/{id}/tracks/']}
+E       AssertionError: {'leader': ['/api/projects/{id}/updates/', '/api/projects/{id}/tracks/'], 'assistant': ['/api/projects/{id}/updates/', '/api/projects/{id}/tracks/'], 'finance': ['/api/projects/{id}/updates/', '/api/projects/{id}/tracks/']}
+2 failed, 19 deselected in 7.28s

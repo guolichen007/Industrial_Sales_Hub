@@ -244,3 +244,26 @@ def test_payment_private_note_not_leaked_via_updates_feed(client_for, base):
     assert "预付款已到账" in a.get(f"/api/projects/{pid}/updates/").content.decode()
     assert "36 万" in client_for("finance").get(f"/api/projects/{pid}/tracks/").content.decode()
     assert "36 万" in client_for("leader").get(f"/api/projects/{pid}/tracks/").content.decode()
+
+
+@pytest.mark.parametrize("track,writer", [("PAYMENT", "finance"), ("DELIVERY", "assistant")])
+def test_V01_revert_reason_stays_in_track_event(client_for, base, track, writer):
+    """RC3 独立审计 V-01：撤销状态记录的原因只保存在状态事件本身（按该线写权限裁剪），不得经进展流/项目详情/动态/工作台到达无权角色。"""
+    pid = _won(base, client_for)
+    code = "PREPAID" if track == "PAYMENT" else "IN_PRODUCTION"
+    ev = client_for(writer).post(f"/api/projects/{pid}/tracks/", {"track": track, "code": code}, format="json").json()["event"]
+    secret = "REVERT-SECRET 应收余额 36 万"
+    assert client_for(writer).post(f"/api/projects/{pid}/tracks/{ev['id']}/revert/", {"reason": secret}, format="json").status_code == 200
+    urls = (f"/api/projects/{pid}/updates/", f"/api/projects/{pid}/", f"/api/projects/{pid}/tracks/", f"/api/projects/{pid}/activity/", "/api/dashboard/", "/api/projects/")
+    allowed = {"PAYMENT": {"leader", "finance"}, "DELIVERY": {"leader", "assistant", "finance"}}[track]
+    bad = {}
+    for role in ("leader", "assistant", "sales", "sales2", "finance"):
+        leaked = [u.replace(f"/{pid}/", "/PID/") for u in urls if "REVERT-SECRET" in client_for(role).get(u).content.decode()]
+        expect = ["/api/projects/PID/tracks/"] if role in allowed else []  # 只在状态线历史中、且只对该线写权限角色可见
+        if leaked != expect:
+            bad[role] = leaked
+    assert not bad, bad
+    # 进展流仍有一条不含原因的公开记录，说明“谁在何时撤销了什么”
+    upd = client_for("sales").get(f"/api/projects/{pid}/updates/").json()
+    rows = upd if isinstance(upd, list) else upd["results"]
+    assert any(r["title"].startswith("撤销状态记录") for r in rows)

@@ -501,7 +501,11 @@ class ProjectViewSet(viewsets.ModelViewSet):
         ev.reverted_at, ev.reverted_by = timezone.now(), request.user
         ev.revert_reason = str_param(request.data.get("reason"), "reason", 200, required=True)
         ev.save(update_fields=["reverted_at", "reverted_by", "revert_reason"])
-        ProjectUpdate.objects.create(project=project, stream=ProjectUpdate.EXECUTION, title=f"撤销状态记录：{ev.label_snapshot}", content=ev.revert_reason, happened_at=timezone.now(), created_by=request.user)
+        # 撤销原因只保存在 TrackEvent.revert_reason（TrackEventSerializer 按该线写权限裁剪）；进展流只记固定文案，
+        # 否则无 payment.write 的商务可经进展流读到资金线撤销原因（RC3 独立审计 V-01）
+        note = "录错已撤销，原因见状态历史"
+        ProjectUpdate.objects.create(project=project, stream=ProjectUpdate.EXECUTION, title=f"撤销状态记录：{ev.label_snapshot}", content=note, public_content=note,
+                                     happened_at=timezone.now(), created_by=request.user)
         audit(request, "track_revert", "project", project.id, f"撤销状态事件 {ev.track}/{ev.code}", {"event_id": ev.id})
         return Response({"summary": track_summary(project, request.user)})
 
