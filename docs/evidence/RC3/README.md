@@ -14,7 +14,7 @@
 | G3 | 内部安全版业绩 PDF | **PASS** | `test_rc3_g3_internal_pdf.py`（5）；反例 `G3-before.txt`（RC2 无此接口，5 项失败）；样张 `内部业绩PDF-虚构样张.pdf`（虚构数据） |
 | G4 | 字段级审计、发生/录入时间、操作记录 | **PASS** | `test_rc3_g4_audit.py`（5）；反例 `G4-before-baa9ef6.txt`（RC2 上 4 项失败） |
 | G5 | Windows 安装加固 T17–T21 | **代码 PASS / 实机 未执行** | `deploy/windows/tests/unit-rc3.ps1`（T17/T18）、`unit-rc3-vc.ps1`（T19）；反例 `G5-T17-before-rc2.txt`；`sim/results.txt`（RC2→RC3，83/0）；实机见 `docs/RC3-Windows实机验收手册.md` |
-| G6 | 无回退、同 SHA CI、签收、交付 | **本地 PASS / 远端 CI 待推送 / 签收未完成** | 后端 338/338（基线 292 全部保留）；E2E 95/95（基线 72 全部保留）；`e2e/e2e_v21_lan_results.json` |
+| G6 | 无回退、同 SHA CI、签收、交付 | **本地 PASS / 远端 CI 待推送 / 签收未完成** | 后端 360/360（基线 292 全部保留）；E2E 105/105（基线 72 全部保留）；`e2e/e2e_v21_lan_results.json` |
 
 本地测试环境：Linux 沙箱，Python 3.12，PostgreSQL 16（pgserver），Chromium（Playwright），PowerShell 7.4 + PSScriptAnalyzer 1.22.0（0 告警）。
 
@@ -26,6 +26,18 @@
 | V-02（P1） | 仅创建报价草稿即把询价改为“已报价” | 新增“报价中”；已报价 = 关联报价已标记发送（`Quote.sent_at`）；作废/改关联重算；人工仅关闭/重新打开；迁移回填 | `V02-before-5c83523.txt`；`test_V02_*`（3 项）；E2E 浏览器检查 |
 
 两项均已关闭（代码 + 反例测试）。审计中的 D-01（财务报价权限）、D-02（询价单含义）、D-03（内部 PDF 默认含待确认业绩）、D-04（多合同分批）为业务口径，列入 `docs/剩余问题.md` D 节等待负责人/甲方决定，未擅自修改。
+
+## 1.2 首期业务收口 C1～C4（2026-11-22 负责人决策 D-1～D-7）
+
+| 项 | 决策 | 实现 | 测试 | 反例（02b5464 上失败） |
+|---|---|---|---|---|
+| C1 | D-2 财务报价与金额权限解耦 | `FINANCE_QUOTE_CAPS={quote.access, product.see_price}`；订单 `OrderQuoteSerializer`（见报价编号、不见合同金额） | `test_rc3_closeout_c1.py`（4）；矩阵 M06–M08、M16、M17 | `C1-before-02b5464.txt`（财务建报价 403；旧开关授予 order.amount/performance.see_amount） |
+| C2 | D-6 内部业绩 PDF 默认仅已确认 | `export_status` 显式（默认 CONFIRMED），列表 `status` 不参与，标题/摘要注明 | `test_rc3_closeout_c2.py`（6） | `C2-before-02b5464.txt`（无参数导出 3 条含待核实/已撤销） |
+| C3 | D-7 内部《项目询价登记单》PDF | `GET /inquiries/{id}/pdf/`，白名单字段、不含价格、审计含 SHA256 | `test_rc3_closeout_c3.py`（3） | `C3-before-02b5464.txt`（接口 404） |
+| C4 | D-5 多合同 = 项目总体状态 | 摘要 `scope/active_order_count/multi_order`；完结须 `confirm_all_covered`，事件与审计留痕 | `test_rc3_closeout_c4.py`（5） | `C4-before-02b5464.txt`（无标识；两张订单直接记完结 201） |
+| 工程 | 迁移稳定性 | `quotations/0005` 内联冻结函数；迁移不得 import apps.*（静态检查）；空库迁移与 0005 回退/重做 | `test_migrations_do_not_import_runtime_app_code`、`test_V02_migration_helper_matches_runtime` | — |
+
+样张（虚构数据）：`内部询价登记单-虚构样张.pdf`、`内部业绩PDF-默认仅已确认-虚构样张.pdf`。
 
 ## 2. 三个必须解释的问题
 
@@ -102,8 +114,8 @@
 ## 5. 可重复命令
 
 ```bash
-cd backend && DATABASE_URL=postgres://… python -m pytest -q                       # 338 passed
-python -m pytest -q tests/test_rc3_*.py                                           # RC3 新增 46 项
+cd backend && DATABASE_URL=postgres://… python -m pytest -q                       # 360 passed
+python -m pytest -q tests/test_rc3_*.py                                           # RC3 新增 67 项（tests/test_rc3_*.py）
 # E2E：见 e2e/e2e_v21_lan.py 头部（需 LAN 模式 Waitress + 已构建前端）
 pwsh -File deploy/windows/tests/unit-rc3.ps1; pwsh -File deploy/windows/tests/unit-rc3-vc.ps1
 ISH_SIM_TOOLS=<含 env/venv env/pwsh 的目录> bash deploy/windows/tests/sim/run_sim.sh <输出目录>   # 需 PostgreSQL
