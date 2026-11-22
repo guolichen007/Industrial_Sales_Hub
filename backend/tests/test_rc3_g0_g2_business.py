@@ -31,9 +31,11 @@ def MATRIX(base):
         ("M03 改他人项目资料", "patch", f"/api/projects/{other}/", {"location": "x"}, {**A, "leader": 200, "assistant": 200, "sales": 403, "finance": 200}),
         ("M04 询价列表", "get", "/api/inquiries/", None, {**A, "leader": 200, "assistant": 200, "sales": 403, "finance": 200}),
         ("M05 登记询价", "post", "/api/inquiries/", {"project": p, "inquirer": acc, "received_on": "2026-11-20", "requirement": "x"}, {**A, "leader": 201, "assistant": 201, "sales": 403, "finance": 201}),
-        ("M06 报价列表（含价格）", "get", "/api/quotations/", None, {**A, "leader": 200, "assistant": 200, "sales": 403, "finance": 403}),
-        ("M07 新建报价", "post", "/api/quotations/", {"project": p, "recipient": acc, "legal_entity": ent}, {**A, "leader": 201, "assistant": 201, "sales": 403, "finance": 403}),
-        ("M08 历史价格", "get", "/api/quote-lines/history/", None, {**A, "leader": 200, "assistant": 200, "sales": 403, "finance": 403}),
+        ("M06 报价列表（含价格）", "get", "/api/quotations/", None, {**A, "leader": 200, "assistant": 200, "sales": 403, "finance": 200}),
+        ("M07 新建报价", "post", "/api/quotations/", {"project": p, "recipient": acc, "legal_entity": ent}, {**A, "leader": 201, "assistant": 201, "sales": 403, "finance": 201}),
+        ("M08 历史价格", "get", "/api/quote-lines/history/", None, {**A, "leader": 200, "assistant": 200, "sales": 403, "finance": 200}),
+        ("M16 新建订单带合同金额", "post", "/api/order-confirmations/", {"project": other, "legal_entity": ent, "basis": "CONTRACT", "order_ref": "M16", "contract_amount": "1"}, {**A, "leader": 201, "assistant": 201, "sales": 403, "finance": 403}),
+        ("M17 签收报价模板", "post", f"/api/legal-entities/{ent}/signoff/", {"note": "矩阵测试签收依据"}, {**A, "leader": 409, "assistant": 403, "sales": 403, "finance": 403}),  # 夹具中模板已签收：负责人通过授权后得到 409 already_signed
         ("M09 补录业绩（无金额）", "post", "/api/performances/", {"title": "矩阵业绩", "year": 2025}, {**A, "leader": 201, "assistant": 201, "sales": 403, "finance": 201}),
         ("M10 补录业绩带金额", "post", "/api/performances/", {"title": "x", "year": 2025, "internal_amount": "1"}, {**A, "leader": 201, "assistant": 201, "sales": 403, "finance": 403}),
         ("M11 业绩设为可公开", "post", "/api/performances/", {"title": "x", "year": 2025, "publishable": True}, {**A, "leader": 201, "assistant": 201, "sales": 403, "finance": 403}),
@@ -46,7 +48,7 @@ def MATRIX(base):
 
 @pytest.mark.parametrize("role", ROLES)
 def test_business_role_request_matrix(client_for, base, role, settings):
-    settings.FINANCE_SCOPE, settings.FINANCE_QUOTE = "BUSINESS", False
+    settings.FINANCE_SCOPE, settings.FINANCE_QUOTE = "BUSINESS", True  # 默认口径（RC3 收口 D-2）
     fails = []
     for name, method, path, body, expect in MATRIX(base):
         c = client_for(role)
@@ -66,10 +68,33 @@ def test_rc2_scope_switch_restores_d5(client_for, base, settings):
 
 
 def test_finance_quote_switch_is_explicit(client_for, base, settings):
+    """RC3 收口 D-2：ISH_FINANCE_QUOTE 只控制报价两项能力（quote.access、product.see_price），从不授予合同/业绩金额。"""
     settings.FINANCE_QUOTE = True
     assert client_for("finance").get("/api/quotations/").status_code == 200
-    assert "quote.access" in client_for("finance").get("/api/auth/me/").json()["caps"]
+    caps = set(client_for("finance").get("/api/auth/me/").json()["caps"])
+    assert {"quote.access", "product.see_price"} <= caps and not ({"order.amount", "performance.see_amount", "template.signoff", "performance.publish", "performance.approve"} & caps)
     assert client_for("sales").get("/api/quotations/").status_code == 403  # 任何口径下销售都无报价
+    settings.FINANCE_QUOTE = False
+    caps = set(client_for("finance").get("/api/auth/me/").json()["caps"])
+    assert client_for("finance").get("/api/quotations/").status_code == 403 and "quote.access" not in caps and "product.see_price" not in caps
+
+
+def test_finance_quote_default_follows_scope():
+    import importlib
+    import os
+
+    from config import settings as st
+
+    old = {k: os.environ.get(k) for k in ("ISH_FINANCE_SCOPE", "ISH_FINANCE_QUOTE")}
+    try:
+        for scope, quote_env, want in (("BUSINESS", None, True), ("RC2", None, False), ("BUSINESS", "0", False), ("RC2", "1", True)):
+            os.environ["ISH_FINANCE_SCOPE"] = scope
+            os.environ.pop("ISH_FINANCE_QUOTE", None) if quote_env is None else os.environ.__setitem__("ISH_FINANCE_QUOTE", quote_env)
+            assert importlib.reload(st).FINANCE_QUOTE is want, (scope, quote_env)
+    finally:
+        for k, v in old.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+        importlib.reload(st)
 
 
 def test_matrix_doc_in_sync(base):

@@ -124,7 +124,7 @@ export default function Quotes() {
   const [view, setView] = useState<"list" | "history">("list");
   return (
     <>
-      <PageHead k="QUOTATION CENTER" title="报价中心" sub="三公司固定模板 · 后端 Decimal 计算 · 生成即冻结版本（仅商务助理/负责人可见；财务需 ISH_FINANCE_QUOTE=1）">
+      <PageHead k="QUOTATION CENTER" title="报价中心" sub="三公司固定模板 · 后端 Decimal 计算 · 生成即冻结版本（负责人、商务、财务可用；销售不可见）">
         <button className="btn primary" onClick={() => setCreating(true)}>+ 新建报价</button>
       </PageHead>
       <div className="tabbar" style={{ marginBottom: 10 }}>

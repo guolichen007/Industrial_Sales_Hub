@@ -44,17 +44,17 @@
 | GET/POST | `projects/{id}/tracks/` | 业务角色（SA 无 private_note） | 交付线 LE AS FI；资金线 LE FI | RC3：生产交付/资金两条状态线，不含金额 |
 | POST | `projects/{id}/tracks/{eid}/revert/` | — | 同上 | 撤销录错的状态事件（只标记不删除） |
 | GET/POST/PATCH | `stage-defs/` | 业务角色 | LE AS | RC3：阶段展示名/排序/停用；code 不可改，无删除 |
-| GET/POST/PATCH | `quotations/` | LE AS（`ISH_FINANCE_QUOTE=1` 时含 FI） | 同左 | D2：SA/AD 一律 403 |
-| POST | `quotations/{id}/status/` | — | LE AS | 试用版本不能标记已发送/已接受（409 trial_quote） |
-| POST | `quotations/{id}/revisions/` | — | LE AS | 复制最新版本为新草稿 |
-| GET/PATCH | `quote-revisions/{id}/` | LE AS | LE AS | 冻结版本修改 409；`host_qty/host_label/warranty` |
-| POST/PATCH/DELETE | `quote-revisions/{id}/lines/…` | — | LE AS | 后端 Decimal 重算 |
+| GET/POST/PATCH | `quotations/` | LE AS FI（RC3 D-2；`ISH_FINANCE_QUOTE=0` 或 RC2 口径时不含 FI） | 同左 | SA/AD 一律 403；FI 的报价权限**不含**合同金额与业绩内部金额 |
+| POST | `quotations/{id}/status/` | — | LE AS FI | 试用版本不能标记已发送/已接受（409 trial_quote） |
+| POST | `quotations/{id}/revisions/` | — | LE AS FI | 复制最新版本为新草稿 |
+| GET/PATCH | `quote-revisions/{id}/` | LE AS FI | LE AS FI | 冻结版本修改 409；`host_qty/host_label/warranty` |
+| POST/PATCH/DELETE | `quote-revisions/{id}/lines/…` | — | LE AS FI | 后端 Decimal 重算 |
 | POST | `quote-revisions/{id}/save-product/` | — | LE AS | 报价行存入产品库 |
-| GET | `quote-revisions/{id}/preview/` | LE AS | — | 草稿预览永远带水印（草稿/试用） |
-| POST | `quote-revisions/{id}/render/` | — | LE AS | 未签收 409 template_unsigned；`{"trial": true}` 生成试用 PDF |
-| GET | `quote-revisions/{id}/pdf/` | LE AS | — | 存档原字节；`X-Quote-Trial` |
-| GET | `quote-lines/history/` | LE AS | — | RC2：历史价格组合查询（仅冻结且非试用） |
-| GET/POST | `order-confirmations/` | LE AS FI | LE AS FI | FI 无金额字段；试用报价不能作为依据 |
+| GET | `quote-revisions/{id}/preview/` | LE AS FI | — | 草稿预览永远带水印（草稿/试用） |
+| POST | `quote-revisions/{id}/render/` | — | LE AS FI | 未签收 409 template_unsigned；`{"trial": true}` 生成试用 PDF |
+| GET | `quote-revisions/{id}/pdf/` | LE AS FI | — | 存档原字节；`X-Quote-Trial` |
+| GET | `quote-lines/history/` | LE AS FI | — | RC2：历史价格组合查询（仅冻结且非试用） |
+| GET/POST | `order-confirmations/` | LE AS FI | LE AS FI | FI 无 `contract_amount`（读不返回、写 403），可见/可关联报价编号（RC3 D-2）；试用报价不能作为依据 |
 | POST | `order-confirmations/{id}/confirm/` `…/revoke/` `…/amount/` | — | 见 D3 / LE / LE AS | |
 | GET/POST/PATCH | `performances/` | LE AS FI SA（SA 仅本人；SA/FI 无金额） | LE AS；FI（RC3，金额/内部备注/公开授权 403） | 筛选：q/year/year_from/year_to/status/source/industry/machine_type/region/sales_owner/project |
 | POST | `performances/{id}/approve/` `…/revoke/` | — | LE | |

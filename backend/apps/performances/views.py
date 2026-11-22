@@ -40,7 +40,7 @@ class PerformanceSerializer(serializers.ModelSerializer):
 
 
 class PerformanceSafeSerializer(PerformanceSerializer):
-    """安全视图（销售、财务）：不含内部金额、内部备注、合同编号（D2/D5）。"""
+    """安全视图（销售、财务）：不含内部金额、内部备注、合同编号（D2/D5；RC3 财务有报价权限也不含业绩金额）。"""
 
     class Meta(PerformanceSerializer.Meta):
         fields = [f for f in PerformanceSerializer.Meta.fields if f not in ("internal_amount", "remark", "order_ref", "order_confirmation")]

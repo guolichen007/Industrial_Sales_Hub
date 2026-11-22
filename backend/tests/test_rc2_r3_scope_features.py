@@ -86,7 +86,9 @@ def test_order_and_quote_files_cannot_be_reclassified_to_sales(client_for, base,
     qa = _up(asst, "quote", qid, "技术方案.pdf".replace(".pdf", ".png")).json()
     r = asst.patch(f"/api/attachments/{qa['id']}/", {"klass": "DELIVERY", "sales_visible": True}, format="json")
     assert r.status_code == 400
-    for who in ("sales", "finance", "admin"):
+    # RC3 收口 D-2：报价附件跟随 quote.access，财务默认可见；销售/管理员任何口径下 403
+    assert client_for("finance").get(f"/api/attachments/?owner_type=quote&owner_id={qid}").status_code == 200
+    for who in ("sales", "admin"):
         c = client_for(who)
         assert c.get(f"/api/attachments/?owner_type=quote&owner_id={qid}").status_code == 403
         assert c.get(f"/api/attachments/{qa['id']}/download/").status_code == 403
@@ -142,7 +144,8 @@ def test_price_history_roles_and_frozen_only(client_for, base, make_quote):
     assert len(rows) == 1 and rows[0]["qty"] == "2.000" and rows[0]["unit_price"] == "39000.00"
     assert c.get(f"/api/quote-lines/history/?recipient={base['accs'][1].id}").json() == []
     assert len(c.get(f"/api/quote-lines/history/?legal_entity={base['ents'][0].id}&date_from=2000-01-01").json()) == 1
-    for who in ("sales", "finance", "admin"):
+    assert client_for("finance").get("/api/quote-lines/history/").status_code == 200  # RC3 收口 D-2：财务可查历史价格
+    for who in ("sales", "admin"):
         assert client_for(who).get("/api/quote-lines/history/").status_code == 403
 
 
@@ -231,9 +234,9 @@ def test_dashboard_overdue_sent_quote_reminder(client_for, base, make_quote):
     QuoteRevision.objects.filter(pk=rid).update(quote_date=timezone.localdate() - timedelta(days=27))
     d = c.get("/api/dashboard/").json()
     assert [x["quote_id"] for x in d["quotes_expiring"]] == [qid] and d["quotes_overdue"] == []
-    for who in ("sales", "finance"):
-        dd = client_for(who).get("/api/dashboard/").json()
-        assert "quotes_overdue" not in dd and "quotes_expiring" not in dd
+    dd = client_for("sales").get("/api/dashboard/").json()
+    assert "quotes_overdue" not in dd and "quotes_expiring" not in dd
+    assert "quotes_overdue" in client_for("finance").get("/api/dashboard/").json()  # RC3 收口 D-2：财务有报价提醒
 
 
 # ------------------------------------------------------------------ 公开授权照片

@@ -242,7 +242,8 @@ if PERFORMANCE_CONFIRM_MODE not in {"OR", "AND"}:
 FINANCE_SCOPE = os.environ.get("ISH_FINANCE_SCOPE", "BUSINESS").strip().upper()  # RC3-G0
 if FINANCE_SCOPE not in {"BUSINESS", "RC2"}:
     raise ConfigError("ISH_FINANCE_SCOPE 只能是 BUSINESS / RC2")
-FINANCE_QUOTE = env_bool("ISH_FINANCE_QUOTE", False)  # RC3-G0：财务可见报价价格（待甲方书面确认）
+# RC3 收口 D-2：财务使用报价中心（仅 quote.access + product.see_price，不含合同/业绩金额）。BUSINESS 口径默认开启，RC2 口径默认关闭。
+FINANCE_QUOTE = env_bool("ISH_FINANCE_QUOTE", FINANCE_SCOPE == "BUSINESS")
 PROJECT_VISIBILITY = os.environ.get("ISH_PROJECT_VISIBILITY", "ALL").strip().upper()  # D7
 if PROJECT_VISIBILITY not in {"ALL", "OWN"}:
     raise ConfigError("ISH_PROJECT_VISIBILITY 只能是 ALL / OWN")

@@ -169,11 +169,13 @@ export default function Dashboard() {
   if (role === "FINANCE")
     return (
       <>
-        <PageHead k="CONTRACT & DELIVERY" title="合同确认与交付执行" sub="财务维护合同/订单确认状态与执行交付节点；本期不提供独立回款/开票/金额台账。" />
+        <PageHead k="CONTRACT & DELIVERY" title="合同确认与交付执行" sub="财务制作报价、确认合同/订单（不录合同金额）、维护交付与资金状态；本期不提供回款/开票/金额台账。">
+          {can("quote.access") && <button className="btn primary" onClick={() => nav("/quotes?new=1")}>+ 新建报价</button>}
+        </PageHead>
         <Kpis items={[["待确认合同/订单", d.orders_pending, "确认后自动建立执行节点"], ["执行中项目", d.executing_projects, "交付节点由商务/财务更新"], ["逾期/延期节点", d.milestone_alerts.length, "需跟进"], ["已确认业绩", d.performance_confirmed, "安全视图（无金额）"]]} />
         <div className="split">
           <div className="grid">
-            <div className="card cardpad"><div className="sectionhead"><h2>待处理</h2></div><div className="actions"><Link className="btn primary" to="/execution">合同/订单确认与执行节点 →</Link></div></div>
+            <div className="card cardpad"><div className="sectionhead"><h2>待处理</h2></div><div className="actions"><Link className="btn primary" to="/execution">合同/订单确认与执行节点 →</Link>{can("inquiry.read") && <Link className="btn" to="/inquiries">询价登记 →</Link>}{can("quote.access") && <Link className="btn" to="/quotes">报价中心 →</Link>}</div></div>
             <ProjectTable projects={(projects || []).filter((p) => p.execution_phase !== "未启动")} title="交付执行项目" empty="暂无执行项目" />
           </div>
           <Alerts d={d} title="逾期节点" />

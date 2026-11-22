@@ -142,7 +142,9 @@ def test_classification_patch_only_by_leader_or_assistant(client_for, base, make
 
 # ---------- P2：财务不能把报价关联到订单；试用报价不会被订单确认改为已接受
 @pytest.mark.django_db
-def test_finance_cannot_bind_quote_to_order(client_for, base, make_quote):
+def test_finance_cannot_bind_quote_to_order(client_for, base, make_quote, settings):
+    # RC3 收口 D-2（2026-11-22 负责人决策）：财务默认使用报价中心；RC2 口径（ISH_FINANCE_SCOPE=RC2）下仍 403——RC3 默认下财务可关联报价，但仍不能录入合同金额（见 test_rc3_closeout_c1）
+    settings.FINANCE_SCOPE, settings.FINANCE_QUOTE = "RC2", False
     qid, _ = make_quote()
     r = client_for("finance").post("/api/order-confirmations/", {"project": base["p_sales"].id, "legal_entity": base["ents"][0].id, "quote": qid, "basis": "CONTRACT", "order_ref": "HT-F1"}, format="json")
     assert r.status_code == 403

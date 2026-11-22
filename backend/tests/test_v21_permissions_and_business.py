@@ -42,11 +42,13 @@ def test_d5_finance_can_confirm_without_amount_and_never_sees_amount(client_for,
     make_quote()
     o = confirm(client_for, base, ref="F-2", amount=None, who="finance")
     assert "contract_amount" not in o
-    # 负责人补录金额后，财务仍看不到
+    # 负责人补录金额后，财务仍看不到合同/业绩金额。
+    # RC3 收口 D-2：财务可用报价中心，因此项目关联报价摘要可含报价总额（total_gross）；合同金额、业绩内部金额仍不可见
+    QUOTE_KEYS = {"total_gross", "total_net", "total_tax", "unit_price", "line_gross", "line_net"}
     for url in ["/api/order-confirmations/", f"/api/projects/{base['p_sales'].id}/related/", "/api/performances/", "/api/performances/stats/", "/api/dashboard/"]:
         r = client_for("finance").get(url)
         assert r.status_code == 200, url
-        assert not (MONEY_KEYS & set(keys(r.json()))), (url, MONEY_KEYS & set(keys(r.json())))
+        assert not ((MONEY_KEYS - QUOTE_KEYS) & set(keys(r.json()))), (url, (MONEY_KEYS - QUOTE_KEYS) & set(keys(r.json())))
 
 
 def test_d5_finance_ledger_closed_for_everyone(client_for, base):

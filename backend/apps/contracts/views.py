@@ -85,8 +85,21 @@ class OrderSafeSerializer(OrderSerializer):
         fields = [f for f in OrderSerializer.Meta.fields if f not in ("contract_amount", "quote", "quote_revision", "quote_code")]
 
 
+class OrderQuoteSerializer(OrderSerializer):
+    """有报价权限但无合同金额权限（RC3 收口 D-2：财务）：可见关联报价编号，不见合同金额。"""
+
+    class Meta(OrderSerializer.Meta):
+        fields = [f for f in OrderSerializer.Meta.fields if f != "contract_amount"]
+
+
+def order_serializer_for(user):
+    if can(user, "order.amount"):
+        return OrderSerializer
+    return OrderQuoteSerializer if can(user, "quote.access") else OrderSafeSerializer
+
+
 def order_payload(o, user):
-    return (OrderSerializer if can(user, "order.amount") else OrderSafeSerializer)(o).data
+    return order_serializer_for(user)(o).data
 
 
 class OrderViewSet(viewsets.ModelViewSet):
@@ -94,7 +107,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post"]
 
     def get_serializer_class(self):
-        return OrderSerializer if can(self.request.user, "order.amount") else OrderSafeSerializer
+        return order_serializer_for(self.request.user)
 
     def get_queryset(self):
         qs = OrderConfirmation.objects.select_related("project", "legal_entity", "customer", "quote", "quote_revision", "confirmed_by").filter(project__in=visible_projects(self.request.user))
@@ -112,7 +125,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         if not can(user, "order.amount") and data.get("contract_amount") not in (None, ""):
             raise PermissionDenied("当前角色不能录入合同金额（由负责人或商务维护）")
         if not can(user, "quote.access") and (data.get("quote") not in (None, "") or data.get("quote_revision") not in (None, "")):
-            raise PermissionDenied("当前角色不能关联报价（D2/D5：报价信息仅负责人与商务可见）")
+            raise PermissionDenied("当前角色不能关联报价（无报价权限）")
         s = OrderSerializer(data=data)
         s.is_valid(raise_exception=True)
         fp = services.fingerprint({**s.validated_data, "confirm_now": confirm_now})

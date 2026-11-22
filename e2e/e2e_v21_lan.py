@@ -215,7 +215,7 @@ with sync_playwright() as pw:
     check("RC3 商务看到“商务工作区”且含询价登记", "商务工作区" in pas.inner_text("aside") and "询价登记" in nav_labels(pas))
     cfi = new()
     pfi = login(cfi, "finance", PW)
-    check("RC3 财务在商务工作区：有询价登记、无报价中心", "询价登记" in nav_labels(pfi) and "报价中心" not in nav_labels(pfi), nav_labels(pfi))
+    check("RC3 财务在商务工作区：有询价登记与报价中心（D-2）", "询价登记" in nav_labels(pfi) and "报价中心" in nav_labels(pfi), nav_labels(pfi))
     s, inq = api(pfi, "POST", "/inquiries/", {"project": pid, "inquirer": acc["华东港口产业集团"], "received_on": time.strftime("%Y-%m-%d"), "requirement": "斗轮机集中润滑改造",
                                                 "items": [{"model": "LUB-320", "name": "集中润滑系统", "qty": "2", "unit": "套"}]})
     check("RC3 财务登记询价（XJ- 编号，记录登记人）", s == 201 and inq["code"].startswith("XJ-") and inq["created_by_name"] == "财务·陈静", (s, inq))
@@ -273,7 +273,9 @@ with sync_playwright() as pw:
     # ---------- 财务：确认合同（无金额）、更新节点 ----------
     cf = new()
     pf = login(cf, "finance", PW)
-    check("财务菜单无报价中心", "报价中心" not in nav_labels(pf))
+    check("RC3 D-2 财务菜单有报价中心", "报价中心" in nav_labels(pf))
+    s, d = api(pf, "GET", "/quote-lines/history/")
+    check("RC3 D-2 财务可查历史价格", s == 200, s)
     try:
         pf.wait_for_selector("text=合同确认与交付执行", timeout=15000)
     except Exception:  # noqa: BLE001 —— 由下方断言记录失败
@@ -296,7 +298,7 @@ with sync_playwright() as pw:
     body = pf.inner_text("body")
     check("财务确认后项目进入执行并自动建节点", "执行：执行中" in body and "订单已确认" in body, body[:200])
     s, orders = api(pf, "GET", "/order-confirmations/")
-    check("财务订单接口无金额与报价编号", "contract_amount" not in json.dumps(orders) and "quote_code" not in json.dumps(orders))
+    check("财务订单接口无合同金额（D-2：报价权限不含合同金额）", "contract_amount" not in json.dumps(orders))
     pf.click(".tabbar >> text=合同执行")
     pf.wait_for_selector("text=执行节点")
     pf.locator("table tr:has-text('生产/备货') button:has-text('更新')").click()
@@ -407,7 +409,9 @@ with sync_playwright() as pw:
     s, qa = upload(pas, "quote", qids[0], "技术方案.png")
     s2, _ = api(p3, "GET", f"/attachments/?owner_type=quote&owner_id={qids[0]}")
     s3, _ = api(pf, "GET", f"/attachments/?owner_type=quote&owner_id={qids[0]}")
-    check("报价附件：商务可上传，销售/财务 403", s == 201 and s2 == 403 and s3 == 403, (s, s2, s3))
+    check("报价附件：商务可上传，销售 403，财务可读（D-2 跟随报价权限）", s == 201 and s2 == 403 and s3 == 200, (s, s2, s3))
+    s4, _ = api(pf, "GET", f"/attachments/?owner_type=order&owner_id={orders[0]['id']}")
+    check("合同证据附件：财务仍 403（跟随合同金额权限）", s4 == 403, s4)
     # 历史价格（商务页面）+ 销售 403
     pas.goto(f"{BASE}/quotes")
     pas.click("text=历史价格查询")

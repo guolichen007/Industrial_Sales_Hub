@@ -1,0 +1,11 @@
+# C1 反例（02b5464，修复前）
+## 1) 默认口径：财务不能制作报价（test_rc3_closeout_c1.py 在 02b5464 代码上运行）
+E       AssertionError: assert ({1, 2} and 'base_price' in {'id': 2, 'sku': 'BRK-600', 'model': 'BRK-600', 'name': '安全制动器', ...})
+E       assert (403 == 201)
+FAILED tests/test_rc3_closeout_c1.py::test_C1_finance_full_quote_workflow - A...
+FAILED tests/test_rc3_closeout_c1.py::test_C1_finance_still_denied_contract_and_performance_amounts
+2 failed, 2 passed in 7.53s
+
+## 2) 旧开关过宽：02b5464 backend/apps/common/roles.py
+86:FINANCE_QUOTE_CAPS = {"quote.access", "order.amount", "performance.see_amount"}
+即 ISH_FINANCE_QUOTE=1 会同时授予合同金额(order.amount)与业绩内部金额(performance.see_amount)。

@@ -21,14 +21,17 @@ def _keys(obj):
 
 # ---------- 报价中心访问矩阵 ----------
 # V2.1：管理员为技术角色，不再默认可读报价
-@pytest.mark.parametrize("role,expected", [("admin", 403), ("leader", 200), ("assistant", 200), ("sales", 403), ("finance", 403)])
+# RC3 收口 D-2（2026-11-22 负责人决策）：财务默认使用报价中心；RC2 口径（ISH_FINANCE_SCOPE=RC2）下仍 403
+@pytest.mark.parametrize("role,expected", [("admin", 403), ("leader", 200), ("assistant", 200), ("sales", 403), ("finance", 200)])
 def test_quote_list_access(role, expected, client_for, make_quote):
     make_quote()
     assert client_for(role).get("/api/quotations/").status_code == expected
 
 
-@pytest.mark.parametrize("role", ["sales", "finance"])
-def test_U05_sales_finance_cannot_read_quote_detail_revision_or_pdf(role, client_for, make_quote, base):
+@pytest.mark.parametrize("role,scope", [("sales", "BUSINESS"), ("sales", "RC2"), ("finance", "RC2")])
+def test_U05_sales_finance_cannot_read_quote_detail_revision_or_pdf(role, scope, client_for, make_quote, base, settings):
+    # RC3 收口 D-2（2026-11-22 负责人决策）：财务默认使用报价中心；RC2 口径（ISH_FINANCE_SCOPE=RC2）下仍 403
+    settings.FINANCE_SCOPE, settings.FINANCE_QUOTE = scope, scope == "BUSINESS"
     qid, rid = make_quote()
     c = client_for(role)
     for url in [f"/api/quotations/{qid}/", f"/api/quote-revisions/{rid}/", f"/api/quote-revisions/{rid}/pdf/", f"/api/quote-revisions/{rid}/preview/"]:
@@ -113,11 +116,15 @@ def test_U07_finance_updates_milestone_sales_sees_safe_timeline(client_for, base
         assert client_for(role).get(f"/api/projects/{pid}/finance/").status_code == 404
 
 
-def test_finance_cannot_edit_quotes_or_presale(client_for, make_quote, base):
+def test_finance_cannot_edit_quotes_or_presale(client_for, make_quote, base, settings):
     qid, rid = make_quote(render=False)
     c = client_for("finance")
-    assert c.patch(f"/api/quote-revisions/{rid}/", {"remark": "x"}, format="json").status_code == 403
+    # RC3 收口 D-2（2026-11-22 负责人决策）：财务默认使用报价中心；RC2 口径（ISH_FINANCE_SCOPE=RC2）下仍 403
+    assert c.patch(f"/api/quote-revisions/{rid}/", {"remark": "x"}, format="json").status_code == 200
+    settings.FINANCE_SCOPE, settings.FINANCE_QUOTE = "RC2", False
+    assert c.patch(f"/api/quote-revisions/{rid}/", {"remark": "y"}, format="json").status_code == 403
     assert c.post(f"/api/quotations/{qid}/status/", {"status": "CANCELLED"}, format="json").status_code == 403
+    settings.FINANCE_SCOPE, settings.FINANCE_QUOTE = "BUSINESS", True
     # RC3-G0 口径调整：BUSINESS 口径下财务可修改项目资料（docs/RC3-业务角色与字段矩阵.md G0-3）；RC2 口径仍 403
     assert c.patch(f"/api/projects/{base['p_sales'].id}/", {"name": "x"}, format="json").status_code == 200
     from django.test import override_settings

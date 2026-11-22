@@ -47,7 +47,7 @@ CAP = {
     "milestone.init": {LEADER, ASSISTANT},
     "project.handoff": {LEADER, ASSISTANT},  # RC3-G1：中标确认/转交商务（锁定销售写入）
     "project.handoff_revert": {LEADER},  # 撤销中标（误操作或失标）仅负责人，必须填原因
-    # ---- 报价（D2：销售/财务/管理员均无） ----
+    # ---- 报价（销售/管理员任何口径均无；财务见 FINANCE_QUOTE_CAPS） ----
     "quote.access": {LEADER, ASSISTANT},
     # ---- 合同/订单（D5：财务可确认，不可见/写金额） ----
     "order.access": {LEADER, ASSISTANT, FINANCE},
@@ -80,10 +80,12 @@ CAP = {
 # RC3-G0 业务口径（docs/RC3-业务角色与字段矩阵.md）：财务纳入商务板块。
 #   ISH_FINANCE_SCOPE=BUSINESS（默认）：财务可建/改项目资料、登记询价、录入/更新业绩（不含金额与公开授权）、维护交付与资金状态；
 #                    RC2：恢复 V2.1 D5（财务只做合同确认与执行节点）。
-#   ISH_FINANCE_QUOTE=1：财务可进入报价中心（含单价/金额）。默认 0——“财务是否可见报价价格”需甲方书面确认后再开。
-#   任何口径下：销售无报价/价格/合同金额；财务不能审批业绩、不能签收模板、不能看“预计规模”自由文本、不能撤销中标。
+#   ISH_FINANCE_QUOTE（RC3 收口 D-2，默认随 BUSINESS 口径开启）：财务使用完整报价中心——新建/编辑/生成/下载报价、历史价格、
+#                    产品库单价（报价选型需要）。**只**授予 FINANCE_QUOTE_CAPS 两项；合同金额（order.amount）与业绩内部金额
+#                    （performance.see_amount）不随之授予，任何开关都不会给财务这两项。设 0 可关闭财务报价。
+#   任何口径下：销售无报价/价格/合同金额；财务不能审批业绩、不能签收模板、不能修改公开授权、不能看“预计规模”自由文本、不能撤销中标。
 FINANCE_BUSINESS_CAPS = {"project.create", "project.edit", "project.edit_any", "inquiry.read", "inquiry.write", "performance.write", "delivery.write", "milestone.init"}
-FINANCE_QUOTE_CAPS = {"quote.access", "order.amount", "performance.see_amount"}
+FINANCE_QUOTE_CAPS = {"quote.access", "product.see_price"}
 
 
 def effective_roles(cap):
