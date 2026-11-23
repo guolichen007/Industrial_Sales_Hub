@@ -129,7 +129,7 @@ function TrackPanel({ p, onChanged }: { p: any; onChanged: () => void }) {
             <tbody>{hist.map((ev) => (
               <tr key={ev.id} style={ev.reverted_at ? { textDecoration: "line-through", opacity: 0.6 } : undefined}>
                 <td>{ev.track === "DELIVERY" ? "交付" : "资金"}</td><td>{ev.label}{ev.current_label && ev.current_label !== ev.label && <div className="micro">现名：{ev.current_label}</div>}{ev.covers_all_orders && <div className="micro">已确认覆盖全部 {ev.active_orders_at} 张合同/订单</div>}</td><td>{dt(ev.happened_on)}</td><td className="micro">{ev.created_by_name} {dt(ev.created_at, true)}</td>
-                <td className="micro">{ev.public_note}{ev.private_note && <div>内部：{ev.private_note}</div>}{ev.reverted_at && <div>已撤销：{ev.reverted_by_name} {ev.revert_reason || ""}</div>}</td>
+                <td className="micro">{ev.public_note}{ev.private_note && <div>内部：{ev.private_note}</div>}{ev.reverted_at && <div>已撤销：{ev.reverted_by_name} · {dt(ev.reverted_at, true)}{ev.revert_reason ? ` · ${ev.revert_reason}` : ""}</div>}</td>
                 <td>{!ev.reverted_at && canTrack(ev.track) && <button className="btn mini" onClick={() => revert(ev)}>撤销</button>}</td>
               </tr>
             ))}{hist.length === 0 && <tr><td colSpan={6} className="empty-cell">暂无</td></tr>}</tbody></table>

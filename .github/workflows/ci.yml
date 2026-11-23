@@ -50,9 +50,12 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: "22" }
       - run: cd frontend && npm ci && npm run typecheck && npm run build
-      - name: business date helper (Asia/Shanghai) under several browser time zones
+      - name: business date helpers (todayBusinessDate, dt) under several browser time zones
         run: |
-          for tz in Asia/Shanghai UTC America/Los_Angeles; do TZ=$tz node frontend/tests/todayBusinessDate.test.mjs; done
+          for tz in Asia/Shanghai UTC America/Los_Angeles; do
+            TZ=$tz node --experimental-strip-types frontend/tests/todayBusinessDate.test.mjs
+            TZ=$tz node --experimental-strip-types frontend/tests/dt.test.mjs
+          done
       - name: no external CDN in build
         run: "! grep -rIl -E 'https?://(cdn|fonts\\.googleapis|unpkg|jsdelivr)' frontend/dist"
       - uses: actions/upload-artifact@v4

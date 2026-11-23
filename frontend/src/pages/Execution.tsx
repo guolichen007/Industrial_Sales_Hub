@@ -149,22 +149,19 @@ export default function Execution() {
 }
 
 function ExecCard({ p }: { p: any }) {
-  const [d] = useLoad(() => get(`/projects/${p.id}/`), [p.id], 30000);
+  // acc7198 审查 R77-P2-04：状态摘要与多合同/需重新确认标识直接取列表数据；只有存在旧执行节点的卡片才请求详情（节点进度条），减少每 30 秒的逐卡请求
+  const hasMs = (p.milestone_total || 0) > 0;
+  const [d] = useLoad(() => (hasMs ? get(`/projects/${p.id}/`) : Promise.resolve(null)), [p.id, hasMs], 30000);
+  const st = p.status || {};
   return (
     <div className="card cardpad">
       <div className="sectionhead">
         <div><Link className="link" to={`/projects/${p.id}`} style={{ fontWeight: 750 }}>{p.name}</Link> <span className="micro">{p.code} · {p.sales_owner_name}</span></div>
         <span><Chip s={p.execution_phase} /></span>
       </div>
-      {!d && p.status && <TrackStatusCell s={p.status} />}
-      {d?.tracks && (d.tracks.delivery || d.tracks.payment) && (
-        <div className="micro" style={{ marginBottom: 6 }}>
-          项目总体状态：生产/交付 <b>{d.tracks.delivery?.label || "—"}</b> ｜ 资金 <b>{d.tracks.payment?.label || "—"}</b>
-          {d.tracks.multi_order && <span style={{ color: "#8a5a12" }}>（本项目 {d.tracks.active_order_count} 张有效合同/订单，非各合同各自状态）</span>}
-          {d.tracks.needs_reconfirmation && <b style={{ color: "#b55c5c" }}> · 完结需重新确认（合同变化或缺少覆盖确认）</b>}
-        </div>
-      )}
-      {d ? (d.milestones.length ? (
+      {p.status && (p.status.delivery || p.status.payment) ? <TrackStatusCell s={p.status} /> : <div className="micro">交付/资金尚未录入</div>}
+      {st.needs_reconfirmation && <div className="micro" style={{ marginBottom: 6 }}><b style={{ color: "#b55c5c" }}>完结需重新确认（合同变化或缺少覆盖确认）</b></div>}
+      {!hasMs ? <div className="sub">尚未建立执行节点</div> : d ? (d.milestones.length ? (
         <div className="progress-rail">
           {d.milestones.map((m: any) => <div key={m.id} className={"progress-tile " + (m.state === "DONE" ? "done" : m.state === "IN_PROGRESS" || m.state === "DELAYED" ? "current" : "")} title={m.note}>{m.stage}<br />{msLabel(m.state)}</div>)}
         </div>

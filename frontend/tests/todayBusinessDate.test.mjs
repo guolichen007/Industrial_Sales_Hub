@@ -1,11 +1,7 @@
 // 5753b5f 审查 R76-P1-02：业务日期一律按 Asia/Shanghai 取“今天”，与浏览器所在时区无关。
-// 运行：TZ=<任意时区> node frontend/tests/todayBusinessDate.test.mjs（CI frontend 作业中以 UTC 与 America/Los_Angeles 各跑一次）
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-const src = readFileSync(fileURLToPath(new URL("../src/api.ts", import.meta.url)), "utf8");
-const body = src.slice(src.indexOf("export const BUSINESS_TZ"));
-const js = body.replace(/export /g, "").replace(/\(now: Date = new Date\(\)\): string/, "(now = new Date())").replace(/\(t: string\)/, "(t)").replace(/\(p\) =>/, "(p) =>");
-const { todayBusinessDate } = new Function(js + "\nreturn { todayBusinessDate };")();
+// 运行：TZ=<任意时区> node --experimental-strip-types frontend/tests/todayBusinessDate.test.mjs（CI frontend 作业中以 UTC 与 America/Los_Angeles 各跑一次）
+// 直接导入真实源码 frontend/src/api.ts（Node 22 --experimental-strip-types 去除类型标注后执行），不复制、不改写被测函数
+const { todayBusinessDate } = await import(new URL("../src/api.ts", import.meta.url).href);
 const cases = [
   ["2026-11-22T16:01:00Z", "2026-11-23"], // 北京 00:01
   ["2026-11-22T18:00:00Z", "2026-11-23"], // 北京 02:00（审查反例）

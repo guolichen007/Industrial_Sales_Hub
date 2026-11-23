@@ -1,0 +1,40 @@
+# acc7198 第四轮审查反例（修复前）
+
+## R77-P1-01 dt()（frontend/tests/dt.test.mjs 在 acc7198 的 api.ts 上，三个浏览器时区）
+纯日期在 America/Los_Angeles 显示前一天；服务器时间戳在非北京时区显示为当地时间（同一记录在不同电脑显示不同日期/时刻）。
+TZ=Asia/Shanghai fail=0
+FAIL dt("2026-11-23T02:00:00+08:00", true) → 2026-11-22 18:00（期望 2026-11-23 02:00）
+FAIL dt("2026-11-22T18:00:00Z", true) → 2026-11-22 18:00（期望 2026-11-23 02:00）
+FAIL dt("2026-11-22T18:00:00Z", false) → 2026-11-22（期望 2026-11-23）
+FAIL dt("2026-12-31T16:30:00.123456Z", true) → 2026-12-31 16:30（期望 2027-01-01 00:30）
+TZ=UTC fail=4
+FAIL dt("2026-11-23", false) → 2026-11-22（期望 2026-11-23）
+FAIL dt("2026-11-30", false) → 2026-11-29（期望 2026-11-30）
+FAIL dt("2026-12-31", false) → 2026-12-30（期望 2026-12-31）
+FAIL dt("2028-02-29", false) → 2028-02-28（期望 2028-02-29）
+FAIL dt("2026-11-23T02:00:00+08:00", true) → 2026-11-22 10:00（期望 2026-11-23 02:00）
+FAIL dt("2026-11-22T18:00:00Z", true) → 2026-11-22 10:00（期望 2026-11-23 02:00）
+FAIL dt("2026-11-22T18:00:00Z", false) → 2026-11-22（期望 2026-11-23）
+FAIL dt("2026-12-31T16:30:00.123456Z", true) → 2026-12-31 08:30（期望 2027-01-01 00:30）
+TZ=America/Los_Angeles fail=8
+
+## R77-P2-02 / P2-03 浏览器（真实 Waitress + PostgreSQL + Chromium）
+{
+ "exec_card_text_after_detail": "R77·进度卡片 PRJ-26001 · sale显示名\n未启动\n项目总体状态：生产/交付 生产中 ｜ 资金 —\n尚未建立执行节点",
+ "exec_card_has_recorder": false,
+ "history_revert_row": "交付\t生产完成\t2026-11-23\tasst显示名 2026-11-23 12:30\t\n已撤销：asst显示名 录错\n\t",
+ "revert_time_shown": false
+}
+解读：进度页卡片在详情加载后只剩“生产中”标签，无发生日期与记录人（exec_card_has_recorder=false）；状态历史撤销行只有撤销人与原因，无撤销时间（revert_time_shown=false）。截图 r77-before/。
+
+## R77-P2-04 跨团队列表 SQL 计数（tests/test_rc3_review_acc7198.py，销售 B 浏览销售 A 的项目）
+SQL_COUNTS /api/projects/?tracking=1 {1: 7, 10: 7, 30: 7, 100: 7}
+.SQL_COUNTS /api/projects/ {1: 8, 10: 8, 30: 8, 100: 8}
+.SQL_COUNTS presale {1: 9, 10: 18, 30: 38, 100: 108}
+        print("SQL_COUNTS presale", counts)
+E       AssertionError: {1: 9, 10: 18, 30: 38, 100: 108}
+E       assert (108 - 9) <= 2
+FAILED tests/test_rc3_review_acc7198.py::test_R77_04_cross_team_presale_list_query_count_constant
+1 failed, 2 passed in 6.97s
+
+解读：已中标项目因 sales_locked_at 短路不查成员（tracking=1 恒 7 条、全部列表恒 8 条）；售前（未中标）项目每个额外 1 条成员查询：1→9、10→18、30→38、100→108，线性增长，N+1 成立。

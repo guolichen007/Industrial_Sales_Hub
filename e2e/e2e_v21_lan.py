@@ -292,6 +292,19 @@ with sync_playwright() as pw:
     p76s.goto(BASE + "/execution")
     p76s.wait_for_selector("text=R76·中标未签约项目", timeout=15000)
     check("RC3 R76 项目进度页默认（中标跟踪中）能找到该项目", "R76·中标未签约项目" in p76s.inner_text("body"))
+    p76s.wait_for_timeout(2500)  # 等待卡片可能的详情加载
+    card76 = p76s.locator(".card:has-text('R76·中标未签约项目')").first.inner_text()
+    check("RC3 R77-P2-02 进度页卡片加载后仍显示记录人与发生日期", "商务·刘敏" in card76 and "财务·陈静" in card76 and re.search(r"\d{4}-\d{2}-\d{2}", card76) is not None, card76[:200])
+    # R77-P1-01：洛杉矶时区的浏览器与北京时区显示同一业务日期与记录时间
+    cla = b.new_context(viewport={"width": 1366, "height": 900}, locale="zh-CN", timezone_id="America/Los_Angeles")
+    pla = login(cla, "sales2", PW)
+    pla.goto(f"{BASE}/projects/{p76['id']}")
+    pla.wait_for_selector("text=交付与资金状态（项目总体）")
+    p76s.goto(f"{BASE}/projects/{p76['id']}")
+    p76s.wait_for_selector("text=交付与资金状态（项目总体）")
+    grab = lambda pg: pg.locator(".card:has-text('交付与资金状态（项目总体）')").first.inner_text()
+    check("RC3 R77-P1-01 洛杉矶时区与北京时区浏览器显示相同的发生日期与记录时间", grab(pla) == grab(p76s), (grab(pla)[:160], grab(p76s)[:160]))
+    cla.close()
     s_tr, rows = api(p76s, "GET", "/projects/?tracking=1")
     row = [x for x in rows if x["id"] == p76["id"]]
     check("RC3 R76 列表 API tracking=1 返回安全摘要（无内部说明/金额）", s_tr == 200 and row and row[0]["status"]["delivery"]["label"] == "生产中" and "private_note" not in json.dumps(rows), s_tr)

@@ -41,7 +41,13 @@ def is_project_editable(user, project):
     if role_of(user) == SALES:
         if project.sales_locked_at is not None:
             return False
-        return project.sales_owner_id == user.id or project.created_by_id == user.id or project.members.filter(pk=user.id).exists()
+        if project.sales_owner_id == user.id or project.created_by_id == user.id:
+            return True
+        # acc7198 审查 R77-P2-04：列表已 prefetch members 时直接用缓存判断，避免每个项目一条成员查询（N+1）
+        cache = getattr(project, "_prefetched_objects_cache", {})
+        if "members" in cache:
+            return any(m.pk == user.id for m in cache["members"])
+        return project.members.filter(pk=user.id).exists()
     return False
 
 

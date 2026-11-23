@@ -112,13 +112,23 @@ export function money(v: string | number | null | undefined) {
   return "¥ " + n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/** 时间戳按北京时间格式化为 YYYY-MM-DD 或 YYYY-MM-DD HH:mm（与浏览器所在时区无关）。 */
+export function fmtBeijing(d: Date, withTime: boolean) {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(d);
+  const g = (t: string) => parts.find((x) => x.type === t)?.value || "";
+  const s = `${g("year")}-${g("month")}-${g("day")}`;
+  return withTime ? `${s} ${g("hour")}:${g("minute")}` : s;
+}
+
+/** 公共日期显示（acc7198 审查 R77-P1-01）：
+ *  - 纯日期 YYYY-MM-DD（业务发生/签订/收到日期）按日历日期原样显示，不经 Date 解析（否则被当作 UTC 午夜，西半球显示前一天）；
+ *  - 带时间的时间戳（服务器记录时间）统一按北京时间显示，所有电脑看到同一时刻。 */
 export function dt(v?: string | null, withTime = false) {
   if (!v) return "—";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
   const d = new Date(v);
   if (isNaN(d.getTime())) return v;
-  const p = (n: number) => String(n).padStart(2, "0");
-  const s = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-  return withTime ? `${s} ${p(d.getHours())}:${p(d.getMinutes())}` : s;
+  return fmtBeijing(d, withTime);
 }
 
 /** 系统业务时区（与后端 TIME_ZONE 一致）。表单默认“今天”一律按此时区取日期，

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { ApiError } from "./api";
+import { ApiError, dt } from "./api";
 
 type Toast = { id: number; text: string; error?: boolean };
 const ToastCtx = createContext<{ notify: (t: string) => void; fail: (e: unknown) => void }>(null as any);
@@ -158,8 +158,8 @@ export function TrackStatusCell({ s }: { s: any }) {
   if (!s) return <span className="micro">—</span>;
   const one = (label: string, x: any) =>
     x ? (
-      <div className="micro" title={`发生 ${x.happened_on || ""} · ${x.created_by_name || ""} 记录于 ${x.created_at ? new Date(x.created_at).toLocaleString("zh-CN") : ""}`}>
-        {label}：<b style={{ color: x.coverage_stale ? "#b55c5c" : undefined }}>{x.label}</b>{x.coverage_stale ? "（需重新确认）" : ""} <span style={{ opacity: 0.75 }}>{x.happened_on} · {x.created_by_name}</span>
+      <div className="micro" title={`发生 ${dt(x.happened_on)} · ${x.created_by_name || ""} 记录于 ${dt(x.created_at, true)}（北京时间）`}>
+        {label}：<b style={{ color: x.coverage_stale ? "#b55c5c" : undefined }}>{x.label}</b>{x.coverage_stale ? "（需重新确认）" : ""} <span style={{ opacity: 0.75 }}>{dt(x.happened_on)} · {x.created_by_name}</span>
       </div>
     ) : <div className="micro">{label}：—</div>;
   return <>{one("交付", s.delivery)}{one("资金", s.payment)}{s.active_order_count > 1 && <div className="micro" style={{ color: "#8a5a12" }}>项目总体（{s.active_order_count} 张合同）</div>}</>;
