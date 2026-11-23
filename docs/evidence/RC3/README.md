@@ -14,7 +14,7 @@
 | G3 | 内部安全版业绩 PDF | **PASS** | `test_rc3_g3_internal_pdf.py`（5）；反例 `G3-before.txt`（RC2 无此接口，5 项失败）；样张 `内部业绩PDF-虚构样张.pdf`（虚构数据） |
 | G4 | 字段级审计、发生/录入时间、操作记录 | **PASS** | `test_rc3_g4_audit.py`（5）；反例 `G4-before-baa9ef6.txt`（RC2 上 4 项失败） |
 | G5 | Windows 安装加固 T17–T21 | **代码 PASS / 实机 未执行** | `deploy/windows/tests/unit-rc3.ps1`（T17/T18）、`unit-rc3-vc.ps1`（T19）；反例 `G5-T17-before-rc2.txt`；`sim/results.txt`（RC2→RC3，83/0）；实机见 `docs/RC3-Windows实机验收手册.md` |
-| G6 | 无回退、同 SHA CI、签收、交付 | **本地 PASS / 远端 CI 待推送 / 签收未完成** | 后端 385/385（基线 292 全部保留）；E2E 109/109（基线 72 全部保留）；`e2e/e2e_v21_lan_results.json` |
+| G6 | 无回退、同 SHA CI、签收、交付 | **本地 PASS / 远端 CI 待推送 / 签收未完成** | 后端 388/388（基线 292 全部保留）；E2E 114/114（基线 72 全部保留）；`e2e/e2e_v21_lan_results.json` |
 
 本地测试环境：Linux 沙箱，Python 3.12，PostgreSQL 16（pgserver），Chromium（Playwright），PowerShell 7.4 + PSScriptAnalyzer 1.22.0（0 告警）。
 
@@ -62,6 +62,17 @@
 | R75-05 | HTTPS 手册（含包内）用 `Industrial Sales Hub*` 通配删除防火墙规则，会删手工 HTTPS 443 规则 | 文档 | 改为精确过滤应用规则或重跑 `-Https` 安装；静态守卫禁止文档/脚本再出现通配删除（对旧文档验证可识别） | `test_no_wildcard_firewall_rule_removal_in_docs_and_scripts` |
 | R75-06 | 询价登记单样张为旧文案 | — | 以当前代码重新生成虚构样张，并新增 45 行明细的长文本分页样张（3 页，表头重复） | 人工核对渲染 |
 | R75-07 | 交付报告章节顺序、旧 G0 默认值描述、包内计数口径 | — | 已修正（见交付报告） | — |
+
+## 1.5 对 5753b5f 第三轮业务验收的定向修复（2026-11-23）
+
+| 编号 | 发现 | 修复前反例 | 修复 | 回归 |
+|---|---|---|---|---|
+| R76-P1-01 | 中标已转交、尚无合同、已有交付/资金状态的项目，在销售常用进度入口中找不到 | `R76-before-5753b5f.txt`：另一位销售首页“全团队执行中项目”为空、KPI=0、进度页默认列表无该项目（截图 `r76-before/`），项目 `execution_phase` 仍为“未启动”；HTTP 用例 2 项失败 | 列表 API `tracking=1/all` + 每项 `status` 安全摘要（批量 3 次查询）；销售首页与进度页默认“中标跟踪中”，可切换“含已完结”；旧执行阶段不伪造，保留为高级筛选 | `test_rc3_review_5753b5f.py`（3，含 30 项目查询数上限、管理员 403、无金额）；E2E（另一位销售首页/进度页，截图 `r76-after/`） |
+| R76-P1-02 | 北京时间凌晨表单默认业务日期为前一天 | Node 固定时刻：2026-11-23 02:00（北京）→ `toISOString` 得 2026-11-22 | `todayBusinessDate()`（Asia/Shanghai），三处表单复用；不改数据库与审计时间 | `frontend/tests/todayBusinessDate.test.mjs`（8 个边界 × 3 个浏览器时区，CI 运行）；E2E 询价默认日期 |
+| R76-P2-03 | “需重新确认”提示断言“合同已变化”，对历史缺少确认的情形不准确 | 源码 | 中性描述“合同变化或缺少覆盖确认”，后端 409 文案同步 | E2E 文案检查 |
+| R76-P2-04 | 列表只显示旧执行阶段与日期 | 源码 | 列表/工作台显示交付/资金（项目总体）与资料最后修改人/时间 | E2E |
+
+现场增补：`RC3-Windows实机验收手册.md` 第 4.2 节 U15–U17。
 
 ## 2. 三个必须解释的问题
 
@@ -138,8 +149,8 @@
 ## 5. 可重复命令
 
 ```bash
-cd backend && DATABASE_URL=postgres://… python -m pytest -q                       # 385 passed
-python -m pytest -q tests/test_rc3_*.py                                           # RC3 新增 92 项（tests/test_rc3_*.py）
+cd backend && DATABASE_URL=postgres://… python -m pytest -q                       # 388 passed
+python -m pytest -q tests/test_rc3_*.py                                           # RC3 新增 95 项（tests/test_rc3_*.py）
 # E2E：见 e2e/e2e_v21_lan.py 头部（需 LAN 模式 Waitress + 已构建前端）
 pwsh -File deploy/windows/tests/unit-rc3.ps1; pwsh -File deploy/windows/tests/unit-rc3-vc.ps1
 ISH_SIM_TOOLS=<含 env/venv env/pwsh 的目录> bash deploy/windows/tests/sim/run_sim.sh <输出目录>   # 需 PostgreSQL
