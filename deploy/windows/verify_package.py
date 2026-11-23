@@ -71,7 +71,7 @@ for rel, n in files.items():
 must = ["01-安装部署.bat", "07-升级程序.bat", "09-导入主体配置.bat", "scripts/upgrade.ps1", "scripts/restore.ps1", "scripts/common.ps1", "tools/make-test-next-version.ps1",
         "runtime/python/python.exe", "runtime/pgsql/bin/postgres.exe", "runtime/pgsql/bin/pg_dump.exe", "runtime/pgsql/bin/pg_restore.exe", "runtime/winsw/WinSW-x64.exe", "runtime/vc_redist.x64.exe",
         "app/backend/apps/quotations/pdf.py", "app/backend/apps/quotations/pdf_r2.py", "app/backend/apps/accounts/management/commands/ish_restore.py", "app/frontend/dist/index.html",
-        "licenses/SBOM.json", "使用说明.md", "备份恢复与升级手册.md", "Windows实机验收手册.md", "HTTPS内网证书配置手册.md", "config-templates/entities.json"]
+        "licenses/SBOM.json", "使用说明.md", "备份恢复与升级手册.md", "Windows实机验收手册.md", "HTTPS内网证书配置手册.md", "RC3-Windows实机验收手册.md", "用户操作手册.md", "config-templates/entities.json"]
 for m in must:
     if m not in files:
         bad.append(f"缺少：{m}")
