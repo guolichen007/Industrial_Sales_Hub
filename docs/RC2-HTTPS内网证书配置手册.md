@@ -34,7 +34,14 @@ ISH_TRUSTED_PROXY=127.0.0.1
 DJANGO_ALLOWED_HOSTS=sales.corp.example,localhost,127.0.0.1
 DJANGO_CSRF_TRUSTED_ORIGINS=https://sales.corp.example
 ```
-然后：删除旧规则 `Get-NetFirewallRule -DisplayName 'Industrial Sales Hub*' | Remove-NetFirewallRule`；重启应用服务 `Restart-Service IndustrialSalesHub-App`。
+然后：**只删除应用端口规则**（新名称以 `Industrial Sales Hub App (TCP ` 开头，RC1/RC2 旧名称为 `Industrial Sales Hub (TCP <端口>)`），**保留** `Industrial Sales Hub HTTPS (443)` 等手工规则：
+```powershell
+Get-NetFirewallRule -DisplayName 'Industrial Sales Hub*' |
+  Where-Object { $_.DisplayName -like 'Industrial Sales Hub App (TCP *' -or $_.DisplayName -match '^Industrial Sales Hub \(TCP \d+\)$' } |
+  Remove-NetFirewallRule
+Get-NetFirewallRule -DisplayName 'Industrial Sales Hub*' | Select-Object DisplayName, Enabled   # 核对：HTTPS (443) 规则仍在
+```
+更简单的做法是直接重新运行 `01-安装部署.bat -Https`（安装器只删除应用规则，见 RC3-T17）。然后重启应用服务 `Restart-Service IndustrialSalesHub-App`。
 
 ## 4. 证书与反向代理（二选一）
 

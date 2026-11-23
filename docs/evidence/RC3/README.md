@@ -14,7 +14,7 @@
 | G3 | 内部安全版业绩 PDF | **PASS** | `test_rc3_g3_internal_pdf.py`（5）；反例 `G3-before.txt`（RC2 无此接口，5 项失败）；样张 `内部业绩PDF-虚构样张.pdf`（虚构数据） |
 | G4 | 字段级审计、发生/录入时间、操作记录 | **PASS** | `test_rc3_g4_audit.py`（5）；反例 `G4-before-baa9ef6.txt`（RC2 上 4 项失败） |
 | G5 | Windows 安装加固 T17–T21 | **代码 PASS / 实机 未执行** | `deploy/windows/tests/unit-rc3.ps1`（T17/T18）、`unit-rc3-vc.ps1`（T19）；反例 `G5-T17-before-rc2.txt`；`sim/results.txt`（RC2→RC3，83/0）；实机见 `docs/RC3-Windows实机验收手册.md` |
-| G6 | 无回退、同 SHA CI、签收、交付 | **本地 PASS / 远端 CI 待推送 / 签收未完成** | 后端 368/368（基线 292 全部保留）；E2E 107/107（基线 72 全部保留）；`e2e/e2e_v21_lan_results.json` |
+| G6 | 无回退、同 SHA CI、签收、交付 | **本地 PASS / 远端 CI 待推送 / 签收未完成** | 后端 385/385（基线 292 全部保留）；E2E 109/109（基线 72 全部保留）；`e2e/e2e_v21_lan_results.json` |
 
 本地测试环境：Linux 沙箱，Python 3.12，PostgreSQL 16（pgserver），Chromium（Playwright），PowerShell 7.4 + PSScriptAnalyzer 1.22.0（0 告警）。
 
@@ -37,7 +37,7 @@
 | C4 | D-5 多合同 = 项目总体状态 | 摘要 `scope/active_order_count/multi_order`；完结须 `confirm_all_covered`，事件与审计留痕 | `test_rc3_closeout_c4.py`（5） | `C4-before-02b5464.txt`（无标识；两张订单直接记完结 201） |
 | 工程 | 迁移稳定性 | `quotations/0005` 内联冻结函数；迁移不得 import apps.*（静态检查）；空库迁移与 0005 回退/重做 | `test_migrations_do_not_import_runtime_app_code`、`test_V02_migration_helper_matches_runtime` | — |
 
-样张（虚构数据）：`内部询价登记单-虚构样张.pdf`、`内部业绩PDF-默认仅已确认-虚构样张.pdf`。
+样张（虚构数据，以最终代码生成）：`内部询价登记单-虚构样张.pdf`、`内部询价登记单-长文本分页-虚构样张.pdf`、`内部业绩PDF-默认仅已确认-虚构样张.pdf`。
 
 ## 1.3 对 74616ed 独立审查的定向修复（2026-11-22）
 
@@ -50,6 +50,18 @@
 | P1-05 | Windows 实机手册未覆盖 C1～C4 | — | 新增 U11–U14（财务报价与金额隔离、三状态业绩 PDF、询价登记单与审计、两/三合同覆盖确认与失效、完结属性篡改 400） | 需实机执行 |
 | P2-06 | 询价单“不含价格”表述过度（自由文本可能人工写价格） | — | 改为“不含价格字段”，PDF 与表单提示需求说明/备注勿填价格、外发前人工核对；不引入金额识别 | `test_C3_*` |
 | P3-07 | CI 日志 1 条 SyntaxWarning（`import_entity_config.py` 文档字符串 `\ `） | CI Run 45024116355 后端日志 | 原始字符串 | 后端以 `-W error::SyntaxWarning` 运行通过 |
+
+## 1.4 对 6912049 第二轮审查的定向修复（2026-11-23）
+
+| 编号 | 发现 | 修复前反例（真实 HTTP / 迁移） | 修复 | 回归 |
+|---|---|---|---|---|
+| R75-01 | 单合同撤销（1→0）或替换（1→另一张）后完结确认不失效；失效后可不确认直接重记完结 | `R75-before-6912049.txt`：两条线 1→0、1→另一张 `coverage_stale=False`；重记返回 201 | 失效判定改为“完结后合同集合任何变化”；该线原完结已失效时重记完结须 `confirm_all_covered`（否则 409） | `test_R75_01_*`（11：两条线 × 4 种变化、重记、合法状态不误伤） |
+| R75-02 | 迁移前“当时 ≥2 张合同、未确认覆盖”的完结，回填 `covered_order_ids` 后被视为有效 | 同上：迁移后 `coverage_stale=False` | 记录当时 ≥2 张却未确认 → 失效、提示重新确认；当时已确认、单合同保持有效；不伪造确认 | `test_R75_02_*`（3） |
+| R75-03 | 可新建与“已交付/完结”同名的非完结阶段（假完结） | 同上：创建返回 201 | 同一状态线展示名（NFKC、去空白、忽略大小写）不得重复，新建/改名撞名 400 | `test_R75_03_*`；E2E |
+| R75-04 | 实机手册 U3 期望“已报价”过期 | 文档 | 拆为 U3a（草稿/未发送→报价中）、U3b（标记发送→已报价） | `test_uat_inquiry_status_expectation_matches_v02` |
+| R75-05 | HTTPS 手册（含包内）用 `Industrial Sales Hub*` 通配删除防火墙规则，会删手工 HTTPS 443 规则 | 文档 | 改为精确过滤应用规则或重跑 `-Https` 安装；静态守卫禁止文档/脚本再出现通配删除（对旧文档验证可识别） | `test_no_wildcard_firewall_rule_removal_in_docs_and_scripts` |
+| R75-06 | 询价登记单样张为旧文案 | — | 以当前代码重新生成虚构样张，并新增 45 行明细的长文本分页样张（3 页，表头重复） | 人工核对渲染 |
+| R75-07 | 交付报告章节顺序、旧 G0 默认值描述、包内计数口径 | — | 已修正（见交付报告） | — |
 
 ## 2. 三个必须解释的问题
 
@@ -126,8 +138,8 @@
 ## 5. 可重复命令
 
 ```bash
-cd backend && DATABASE_URL=postgres://… python -m pytest -q                       # 368 passed
-python -m pytest -q tests/test_rc3_*.py                                           # RC3 新增 75 项（tests/test_rc3_*.py）
+cd backend && DATABASE_URL=postgres://… python -m pytest -q                       # 385 passed
+python -m pytest -q tests/test_rc3_*.py                                           # RC3 新增 92 项（tests/test_rc3_*.py）
 # E2E：见 e2e/e2e_v21_lan.py 头部（需 LAN 模式 Waitress + 已构建前端）
 pwsh -File deploy/windows/tests/unit-rc3.ps1; pwsh -File deploy/windows/tests/unit-rc3-vc.ps1
 ISH_SIM_TOOLS=<含 env/venv env/pwsh 的目录> bash deploy/windows/tests/sim/run_sim.sh <输出目录>   # 需 PostgreSQL
