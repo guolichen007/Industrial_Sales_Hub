@@ -14,7 +14,7 @@
 | G3 | 内部安全版业绩 PDF | **PASS** | `test_rc3_g3_internal_pdf.py`（5）；反例 `G3-before.txt`（RC2 无此接口，5 项失败）；样张 `内部业绩PDF-虚构样张.pdf`（虚构数据） |
 | G4 | 字段级审计、发生/录入时间、操作记录 | **PASS** | `test_rc3_g4_audit.py`（5）；反例 `G4-before-baa9ef6.txt`（RC2 上 4 项失败） |
 | G5 | Windows 安装加固 T17–T21 | **代码 PASS / 实机 未执行** | `deploy/windows/tests/unit-rc3.ps1`（T17/T18）、`unit-rc3-vc.ps1`（T19）；反例 `G5-T17-before-rc2.txt`；`sim/results.txt`（RC2→RC3，83/0）；实机见 `docs/RC3-Windows实机验收手册.md` |
-| G6 | 无回退、同 SHA CI、签收、交付 | **本地 PASS / 远端 CI 待推送 / 签收未完成** | 后端 388/388（基线 292 全部保留）；E2E 114/114（基线 72 全部保留）；`e2e/e2e_v21_lan_results.json` |
+| G6 | 无回退、同 SHA CI、签收、交付 | **本地 PASS / 远端 CI 待推送 / 签收未完成** | 后端 392/392（基线 292 全部保留）；E2E 116/116（基线 72 全部保留）；`e2e/e2e_v21_lan_results.json` |
 
 本地测试环境：Linux 沙箱，Python 3.12，PostgreSQL 16（pgserver），Chromium（Playwright），PowerShell 7.4 + PSScriptAnalyzer 1.22.0（0 告警）。
 
@@ -73,6 +73,15 @@
 | R76-P2-04 | 列表只显示旧执行阶段与日期 | 源码 | 列表/工作台显示交付/资金（项目总体）与资料最后修改人/时间 | E2E |
 
 现场增补：`RC3-Windows实机验收手册.md` 第 4.2 节 U15–U17。
+
+## 1.6 对 acc7198 第四轮审查的定向修复（2026-11-23）
+
+| 编号 | 发现 | 修复前反例 | 修复 | 回归 |
+|---|---|---|---|---|
+| R77-P1-01 | `dt()` 把纯日期解析成 UTC 午夜，西半球时区显示前一天；时间戳按浏览器当地时区显示，不同电脑看到不同时刻 | `R77-before-acc7198.txt`：dt 测试在 acc7198 的 api.ts 上，UTC 失败 4 项、America/Los_Angeles 失败 8 项 | 纯日期原样显示；时间戳统一按北京时间显示（`fmtBeijing`）；状态摘要单元格也改用 `dt()` | `frontend/tests/dt.test.mjs`（直接导入真实 `api.ts`，8 个用例 × 3 个时区，CI 运行）；E2E：洛杉矶时区与北京时区的浏览器显示相同 |
+| R77-P2-02 | 进度页卡片加载详情后，只剩阶段标签 | 浏览器反例：`exec_card_has_recorder=false`（截图 `r77-before/`） | 卡片始终显示安全摘要（含日期和记录人），无状态时显示“尚未录入”；只有存在旧执行节点的卡片才请求详情 | E2E（截图 `r77-after/`） |
+| R77-P2-03 | 状态历史的撤销行不显示撤销时间 | 浏览器反例：`revert_time_shown=false` | 撤销行显示“撤销人 · 撤销时间 · 原因” | 浏览器复测 |
+| R77-P2-04 | 跨团队浏览售前项目时存在 N+1 查询 | 销售 B 浏览销售 A 的 1/10/30/100 个售前项目，SQL 次数 9/18/38/108，线性增长（已中标项目因提前判断返回，不受影响） | `can_edit` 的成员判断改用已预取的成员数据 | `test_rc3_review_acc7198.py`：三种列表的 SQL 次数恒为 7，另加成员语义回归测试 |
 
 ## 2. 三个必须解释的问题
 
@@ -149,8 +158,8 @@
 ## 5. 可重复命令
 
 ```bash
-cd backend && DATABASE_URL=postgres://… python -m pytest -q                       # 388 passed
-python -m pytest -q tests/test_rc3_*.py                                           # RC3 新增 95 项（tests/test_rc3_*.py）
+cd backend && DATABASE_URL=postgres://… python -m pytest -q                       # 392 passed
+python -m pytest -q tests/test_rc3_*.py                                           # RC3 新增 99 项（tests/test_rc3_*.py）
 # E2E：见 e2e/e2e_v21_lan.py 头部（需 LAN 模式 Waitress + 已构建前端）
 pwsh -File deploy/windows/tests/unit-rc3.ps1; pwsh -File deploy/windows/tests/unit-rc3-vc.ps1
 ISH_SIM_TOOLS=<含 env/venv env/pwsh 的目录> bash deploy/windows/tests/sim/run_sim.sh <输出目录>   # 需 PostgreSQL
