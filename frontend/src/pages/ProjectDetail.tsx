@@ -147,7 +147,7 @@ function TrackPanel({ p, onChanged }: { p: any; onChanged: () => void }) {
             {needCover && (
               <label className="formfield full" style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
                 <input type="checkbox" checked={!!form.confirm_all_covered} onChange={(e) => setForm({ ...form, confirm_all_covered: e.target.checked })} />
-                <span>本项目有 {t.active_order_count} 张有效合同/订单。我确认“{(stages || []).find((d: any) => d.track === form.track && d.code === form.code)?.label}”已覆盖<b>全部</b>合同/批次（将记录操作人与时间）。</span>
+                <span>{t.needs_reconfirmation ? `上次完结记录后合同/订单已变化（当前 ${t.active_order_count} 张有效）。` : `本项目有 ${t.active_order_count} 张有效合同/订单。`}我确认“{(stages || []).find((d: any) => d.track === form.track && d.code === form.code)?.label}”已覆盖<b>全部</b>合同/批次（将记录操作人与时间）。</span>
               </label>
             )}
           </div>

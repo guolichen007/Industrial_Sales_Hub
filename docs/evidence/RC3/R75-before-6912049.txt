@@ -1,0 +1,28 @@
+# 6912049 第二轮审查反例（修复前，真实 PostgreSQL + DRF HTTP；tests/test_rc3_review_6912049.py）
+# 8 failed / 7 passed：失败项即 R75-01（1→0、1→另一张、失效后不确认可重记终态）、R75-02（历史多合同未确认终态迁移后被视为有效）、R75-03（自定义阶段可与正式完结同名）
+# 通过项（修复前已正确）：1→2、2 张替换、历史多合同已确认、历史单合同、0 张/非终态合法状态
+E       AssertionError: ('1to0', {'delivery': {'code': 'COMPLETED', 'label': '已交付/完结', 'is_final': True, 'happened_on': '2026-11-23', ...}, 'payment': None, 'scope': 'PROJECT', 'active_order_count': 0, ...})
+E       assert (False is True)
+E       AssertionError: ('1to0', {'delivery': None, 'payment': {'code': 'SETTLED', 'label': '已结清', 'is_final': True, 'happened_on': '2026-11-23', ...}, 'scope': 'PROJECT', 'active_order_count': 0, ...})
+E       assert (False is True)
+E       AssertionError: ('1to_other1', {'delivery': {'code': 'COMPLETED', 'label': '已交付/完结', 'is_final': True, 'happened_on': '2026-11-23', ...}, 'payment': None, 'scope': 'PROJECT', 'active_order_count': 1, ...})
+E       assert (False is True)
+E       AssertionError: ('1to_other1', {'delivery': None, 'payment': {'code': 'SETTLED', 'label': '已结清', 'is_final': True, 'happened_on': '2026-11-23', ...}, 'scope': 'PROJECT', 'active_order_count': 1, ...})
+E       assert (False is True)
+E       AssertionError: (201, b'{"summary":{"delivery":{"code":"COMPLETED","label":"\xe5\xb7\xb2\xe4\xba\xa4\xe4\xbb\x98/\xe5\xae\x8c\xe7\xbb\...ue,"happened_on":"2026-11-23","created_at":"2026-11-23T01:44:26.211490Z","created_by_name":"assistant","public_note
+E       assert (201 == 409)
+E       AssertionError: (201, b'{"summary":{"delivery":null,"payment":{"code":"SETTLED","label":"\xe5\xb7\xb2\xe7\xbb\x93\xe6\xb8\x85","is_final":true,"happened_on":"2026-11-23","created_at":"2026-11-23T01:44:26.881929Z","created_by_name":"finance","public_no'
+E       assert (201 == 409)
+E       AssertionError: (False, {'delivery': {'code': 'COMPLETED', 'label': '已交付/完结', 'is_final': True, 'happened_on': '2026-11-20', ...}, 'payment': None, 'scope': 'PROJECT', 'active_order_count': 2, ...})
+E       assert (False is True)
+E       AssertionError: (201, b'{"id":13,"track":"DELIVERY","code":"HANDOVER_DONE","label":"\xe5\xb7\xb2\xe4\xba\xa4\xe4\xbb\x98/\xe5\xae\x8c\...":99,"active":true,"is_final":false,"used":false,"updated_by_name":"assistant","updated_at":"2026-11-23T09:44:29.97
+E       assert 201 == 400
+FAILED tests/test_rc3_review_6912049.py::test_R75_01_any_order_set_change_marks_stale[1to0-DELIVERY]
+FAILED tests/test_rc3_review_6912049.py::test_R75_01_any_order_set_change_marks_stale[1to0-PAYMENT]
+FAILED tests/test_rc3_review_6912049.py::test_R75_01_any_order_set_change_marks_stale[1to_other1-DELIVERY]
+FAILED tests/test_rc3_review_6912049.py::test_R75_01_any_order_set_change_marks_stale[1to_other1-PAYMENT]
+FAILED tests/test_rc3_review_6912049.py::test_R75_01_stale_requires_confirmation_to_rerecord[DELIVERY]
+FAILED tests/test_rc3_review_6912049.py::test_R75_01_stale_requires_confirmation_to_rerecord[PAYMENT]
+FAILED tests/test_rc3_review_6912049.py::test_R75_02_legacy_multi_order_final_after_migration[False-True]
+FAILED tests/test_rc3_review_6912049.py::test_R75_03_custom_stage_cannot_mimic_final_label
+8 failed, 7 passed in 16.06s

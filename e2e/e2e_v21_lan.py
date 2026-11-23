@@ -466,6 +466,10 @@ with sync_playwright() as pw:
     ps.wait_for_selector("text=交付与资金状态（项目总体）")
     check("RC3 审查 P1-02 完结后新增合同，页面提示完结确认已失效", s3 == 201 and "完结确认已失效" in ps.inner_text("body"), s3)
     ps.screenshot(path=f"{OUT}/14_rc3_sales_multi_order_coverage_stale.png", full_page=True)
+    s_x, d_x = api(pas, "POST", f"/projects/{pid}/tracks/", {"track": "DELIVERY", "code": "COMPLETED"})
+    check("RC3 审查 R75-01 失效后不确认重记完结被拒（409）", s_x == 409 and (d_x or {}).get("code") == "confirm_coverage_required", (s_x, d_x))
+    s_n, _ = api(pas, "POST", "/stage-defs/", {"track": "DELIVERY", "code": "FAKE_DONE", "label": "已交付/完结", "sort": 99})
+    check("RC3 审查 R75-03 不能新建与完结阶段同名的阶段（400）", s_n == 400, s_n)
     s, me_p = api(pl, "GET", f"/projects/{pid}/")
     check("RC3 合同确认后仍保持中标锁定（成交、sales_locked_at）", me_p["presale_phase"] == "成交" and me_p["sales_locked_at"], me_p.get("presale_phase"))
 

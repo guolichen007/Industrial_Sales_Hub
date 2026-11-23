@@ -480,10 +480,16 @@ class ProjectViewSet(viewsets.ModelViewSet):
         order_ids = sorted(project.orders.filter(status="CONFIRMED").values_list("id", flat=True))
         n_orders = len(order_ids)
         covers = bool_param(request.data.get("confirm_all_covered", False))
-        if d.is_final and n_orders > 1 and not covers:
-            raise BusinessError(f"本项目有 {n_orders} 张有效合同/订单，状态线记录的是项目总体状态。记录“{d.label}”前请确认已覆盖全部合同/批次（confirm_all_covered）。",
-                                code="confirm_coverage_required", http_status=409)
-        ev = s.save(project=project, created_by=request.user, label_snapshot=d.label, active_orders_at=n_orders, covers_all_orders=bool(d.is_final and n_orders > 1 and covers),
+        # 6912049 审查 R75-01：该线当前完结状态的覆盖确认已失效（合同集合变化，含 1→0、1→另一张）时，重新记录完结也须确认
+        prev = current_event(project, track)
+        prev_d = stage_map(track).get(prev.code) if prev else None
+        stale = bool(prev and coverage_stale(prev, bool(prev_d and prev_d.is_final), order_ids))
+        need = d.is_final and (n_orders > 1 or stale)
+        if need and not covers:
+            why = (f"本项目有 {n_orders} 张有效合同/订单，状态线记录的是项目总体状态。" if n_orders > 1
+                   else "上次完结记录之后合同/订单已发生变化（新增、撤销或替换），原完结确认已失效。")
+            raise BusinessError(f"{why}记录“{d.label}”前请确认已覆盖全部合同/批次（confirm_all_covered）。", code="confirm_coverage_required", http_status=409)
+        ev = s.save(project=project, created_by=request.user, label_snapshot=d.label, active_orders_at=n_orders, covers_all_orders=bool(need and covers),
                     covered_order_ids=order_ids)
         project.updated_by = request.user
         project.save(update_fields=["updated_by", "updated_at"])
@@ -589,6 +595,19 @@ def current_event(project, track):
     return project.track_events.filter(track=track, reverted_at__isnull=True).order_by("-happened_on", "-id").first()
 
 
+def coverage_stale(ev, is_final, current_ids):
+    """完结类状态的覆盖确认是否失效（D-5；74616ed 审查 P1-02、6912049 审查 R75-01/R75-02）：
+    1) 记录后有效合同/订单集合发生任何变化（新增、撤销、替换；与 0/1/多张数量无关）→ 失效；
+    2) 记录当时已有 ≥2 张有效合同却没有覆盖确认（迁移前的旧数据、或 74616ed 时期的绕过）→ 失效，不静默视为有效。
+    非完结状态不涉及覆盖确认。"""
+    if not is_final:
+        return False
+    snap = sorted(ev.covered_order_ids or [])
+    if snap != list(current_ids):
+        return True
+    return len(snap) > 1 and not ev.covers_all_orders
+
+
 def track_summary(project, user):
     """项目两条状态线的当前值。所有角色可见：阶段（当前展示名）、发生日期、记录人与系统时间、公开说明；
     仅有对应写权限的角色可见 private_note。**任何角色都不返回金额**（模型中不存在金额字段）。"""
@@ -604,8 +623,7 @@ def track_summary(project, user):
         item = {"code": ev.code, "label": d.label if d else ev.label_snapshot, "is_final": bool(d and d.is_final), "happened_on": ev.happened_on,
                 "created_at": ev.created_at, "created_by_name": ev.created_by.name if ev.created_by else "", "public_note": ev.public_note,
                 "covers_all_orders": ev.covers_all_orders}
-        # 74616ed 审查 P1-02：完结类状态记录后有效合同/订单集合发生变化（新增/撤销/替换，不只比较数量）→ 覆盖确认已失效
-        item["coverage_stale"] = bool(item["is_final"] and sorted(ev.covered_order_ids or []) != current_ids and (len(current_ids) > 1 or ev.covers_all_orders))
+        item["coverage_stale"] = coverage_stale(ev, item["is_final"], current_ids)
         if can(user, cap):
             item["private_note"] = ev.private_note
         out[track.lower()] = item
@@ -668,6 +686,25 @@ class StageDefSerializer(serializers.ModelSerializer):
         return TrackEvent.objects.filter(track=obj.track, code=obj.code).exists()
 
 
+def _norm_label(v):
+    import unicodedata
+
+    return "".join(unicodedata.normalize("NFKC", str(v or "")).split()).lower()
+
+
+def _reject_duplicate_label(track, label, instance):
+    """6912049 审查 R75-03：同一状态线内展示名称（规范化：全半角、空白、大小写）不得重复，
+    防止新建非完结阶段冒用“已交付/完结”等正式完结阶段的名称造成“假完结”。"""
+    n = _norm_label(label)
+    if not n:
+        return
+    qs = StageDef.objects.filter(track=track)
+    if instance is not None:
+        qs = qs.exclude(pk=instance.pk)
+    if any(_norm_label(x.label) == n for x in qs):
+        raise serializers.ValidationError({"label": "同一状态线已有同名阶段（含完结阶段），请使用可区分的名称"})
+
+
 def _reject_is_final_change(data, instance):
     """74616ed 审查 P0-01：“是否完结阶段”（is_final）决定多合同完结确认与项目完结判断，属于固定业务语义，
     不能经阶段配置 API 修改（否则可先改成非完结、绕过覆盖确认记录完结、再改回）。显式提交不同值 → 400；
@@ -704,6 +741,7 @@ class StageDefViewSet(viewsets.ModelViewSet):
         if StageDef.objects.filter(track=track, code=code).exists():
             raise BusinessError("该阶段代码已存在", code="duplicate_stage")
         _reject_is_final_change(request.data, None)
+        _reject_duplicate_label(track, request.data.get("label"), None)
         s = StageDefSerializer(data=request.data)
         s.is_valid(raise_exception=True)
         d = s.save(track=track, code=code, updated_by=request.user, is_final=False)
@@ -712,6 +750,8 @@ class StageDefViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, s):
         _reject_is_final_change(self.request.data, s.instance)
+        if "label" in self.request.data:
+            _reject_duplicate_label(s.instance.track, self.request.data.get("label"), s.instance)
         before = {k: getattr(s.instance, k) for k in ("label", "sort", "active", "is_final")}
         d = s.save(updated_by=self.request.user)
         changed = {k: [str(before[k]), str(getattr(d, k))] for k in before if before[k] != getattr(d, k)}

@@ -42,9 +42,9 @@
 | GET/POST/PATCH | `inquiries/` | LE AS FI | LE AS FI | RC3：询价登记（不含价格；明细中价格/金额键被拒绝）；返回关联报价编号。状态 待报价/报价中/已报价 由关联报价自动计算（已报价 = 关联报价已标记发送），人工只能 `OPEN`（重新打开）/`CLOSED` |
 | GET | `inquiries/{id}/pdf/` | LE AS FI | — | RC3 收口 D-7：内部《项目询价登记单》PDF（只读该询价记录，不含价格；已关闭可下载；`?inline=1` 预览；写审计含 SHA256） |
 | POST | `projects/{id}/handoff/` `projects/{id}/handoff/revert/` | — | LE AS / 仅 LE | RC3：中标确认转交（锁定销售写入）/ 撤销中标 |
-| GET/POST | `projects/{id}/tracks/` | 业务角色（SA 无 private_note） | 交付线 LE AS FI；资金线 LE FI | RC3：生产交付/资金两条状态线，不含金额。摘要含 `scope=PROJECT`、`active_order_count`、`multi_order`、`needs_reconfirmation`（各线 `coverage_stale`：完结记录后有效合同/订单集合变化）；事件 `label` 为记录时名称、`current_label` 为现名；有 ≥2 张有效合同/订单时记录完结类阶段须 `confirm_all_covered=true`，否则 409 `confirm_coverage_required`（D-5） |
+| GET/POST | `projects/{id}/tracks/` | 业务角色（SA 无 private_note） | 交付线 LE AS FI；资金线 LE FI | RC3：生产交付/资金两条状态线，不含金额。摘要含 `scope=PROJECT`、`active_order_count`、`multi_order`、`needs_reconfirmation`（各线 `coverage_stale`：完结记录后有效合同/订单集合变化）；事件 `label` 为记录时名称、`current_label` 为现名；有 ≥2 张有效合同/订单、或该线原完结确认已失效（合同集合任何变化，含 1→0、1→另一张）时，记录完结类阶段须 `confirm_all_covered=true`，否则 409 `confirm_coverage_required`（D-5）。失效判定：完结后合同集合变化，或记录当时 ≥2 张却未确认覆盖（含迁移前旧数据） |
 | POST | `projects/{id}/tracks/{eid}/revert/` | — | 同上 | 撤销录错的状态事件（只标记不删除） |
-| GET/POST/PATCH | `stage-defs/` | 业务角色 | LE AS | RC3：阶段展示名/排序/停用；code、track、`is_final`（完结属性）不可改——显式提交不同的 `is_final` 返回 400，新增阶段一律非完结；无删除 |
+| GET/POST/PATCH | `stage-defs/` | 业务角色 | LE AS | RC3：阶段展示名/排序/停用；code、track、`is_final`（完结属性）不可改——显式提交不同的 `is_final` 返回 400，新增阶段一律非完结；同一状态线展示名（忽略空白/全半角/大小写）不得重复（400）；无删除 |
 | GET/POST/PATCH | `quotations/` | LE AS FI（RC3 D-2；`ISH_FINANCE_QUOTE=0` 或 RC2 口径时不含 FI） | 同左 | SA/AD 一律 403；FI 的报价权限**不含**合同金额与业绩内部金额 |
 | POST | `quotations/{id}/status/` | — | LE AS FI | 试用版本不能标记已发送/已接受（409 trial_quote） |
 | POST | `quotations/{id}/revisions/` | — | LE AS FI | 复制最新版本为新草稿 |
