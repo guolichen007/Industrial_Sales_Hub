@@ -1,0 +1,30 @@
+# 5753b5f 第三轮审查反例（修复前）
+
+## R76-P1-01 浏览器（真实 Waitress + PostgreSQL + Chromium，独立浏览器上下文）
+步骤：销售 sale 建项目（无合同）→ 商务 asst 中标确认 → 商务记录“生产中” → 财务 fin 记录“预付款已到账”；另一位销售 sale2 查看。
+{
+ "handoff": 200,
+ "delivery": 201,
+ "payment": 201,
+ "detail_shows_status": true,
+ "home_lists_project": true,
+ "progress_page_lists_project": false,
+ "other_sales_home_lists_project": true,
+ "other_sales_progress_lists_project": false,
+ "other_sales_detail_shows_status": true,
+ "api_execution_phase_filter": [],
+ "project_execution_phase": "未启动"
+}
+解读：项目详情可见状态（detail_shows_status=true）；另一位销售的首页“全团队执行中项目”表格为空、“执行中项目”KPI=0（截图 r76-before/r76_other_sales_home.png，项目名只出现在“最近项目动态”时间线），
+“项目进度查询”页默认筛选（execution_phase=执行中）不含该项目（progress_lists_project=false，截图 r76_sales_progress.png）；项目 execution_phase 仍为“未启动”。
+
+## R76-P1-01 HTTP（tests/test_rc3_review_5753b5f.py 在 5753b5f 上）
+E           KeyError: 'status'
+E       assert (3 in {3, 4} and 4 not in {3, 4})
+FAILED tests/test_rc3_review_5753b5f.py::test_R76_01_won_unsigned_project_found_in_sales_progress_entry
+FAILED tests/test_rc3_review_5753b5f.py::test_R76_01_tracking_scope_rules - a...
+2 failed, 1 passed in 7.55s
+
+## R76-P1-02 固定时刻日期（Node，与浏览器相同的 Date 实现）
+toISOString().slice(0,10) = 2026-11-22 （期望业务日期 2026-11-23）
+涉及 frontend/src/pages/ProjectDetail.tsx（状态 happened_on）、Inquiries.tsx（received_on）、Execution.tsx（signed_on）三处 new Date().toISOString().slice(0, 10)。

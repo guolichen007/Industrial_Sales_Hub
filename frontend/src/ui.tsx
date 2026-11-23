@@ -151,3 +151,16 @@ export function useForm<T extends Record<string, any>>(init: T) {
   };
   return { v, setV, bind, errs, setErrs, catchErr };
 }
+
+
+/** 项目列表中的两条状态线安全摘要（5753b5f 审查 R76-P1-01/P2-04）：阶段 + 发生日期 + 记录人/系统时间；无金额与说明文字。 */
+export function TrackStatusCell({ s }: { s: any }) {
+  if (!s) return <span className="micro">—</span>;
+  const one = (label: string, x: any) =>
+    x ? (
+      <div className="micro" title={`发生 ${x.happened_on || ""} · ${x.created_by_name || ""} 记录于 ${x.created_at ? new Date(x.created_at).toLocaleString("zh-CN") : ""}`}>
+        {label}：<b style={{ color: x.coverage_stale ? "#b55c5c" : undefined }}>{x.label}</b>{x.coverage_stale ? "（需重新确认）" : ""} <span style={{ opacity: 0.75 }}>{x.happened_on} · {x.created_by_name}</span>
+      </div>
+    ) : <div className="micro">{label}：—</div>;
+  return <>{one("交付", s.delivery)}{one("资金", s.payment)}{s.active_order_count > 1 && <div className="micro" style={{ color: "#8a5a12" }}>项目总体（{s.active_order_count} 张合同）</div>}</>;
+}

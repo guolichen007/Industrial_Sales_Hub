@@ -34,6 +34,7 @@
 | GET | `accounts/{id}/projects/` | LE AS SA FI | — | 受可见范围限制；`?q=&role=&presale_phase=&execution_phase=` |
 | GET/POST/PATCH/DELETE | `contacts/` | LE AS SA FI | LE AS SA | |
 | GET/POST/PATCH | `product-categories/` `parameter-definitions/` `products/` | 业务角色（SA/FI 不含价格） | LE AS | 无删除，停用代替 |
+| GET | `projects/?tracking=1` / `?tracking=all` | LE AS SA FI | — | RC3 R76：已中标或已有有效合同、且两条状态线未全部完结（`1`）/ 含已完结（`all`）的项目；列表每项含 `status`（交付/资金阶段、发生日期、记录人、系统时间、完结/需重新确认标识；无说明文字与金额）与 `updated_by_name`；其他值 400 |
 | GET/POST/PATCH/DELETE | `projects/` | LE AS SA FI（SA 可见≠可编辑） | LE AS FI SA（SA 仅本人/参与且未中标；成员仅 LE AS 指派） | 删除仅 LE；RC3 FI 写入随 `ISH_FINANCE_SCOPE=BUSINESS` |
 | GET/POST/DELETE | `projects/{id}/parties/…` | 同上 | 同上 | 参与方，同项目同组织同身份去重 |
 | GET/POST | `projects/{id}/updates/` | 同上 | 售前：LE AS SA；执行：LE AS FI | |

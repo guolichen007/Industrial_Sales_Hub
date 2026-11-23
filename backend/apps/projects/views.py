@@ -116,6 +116,54 @@ class ProjectListSerializer(serializers.ModelSerializer):
     def get_can_edit(self, obj):
         return is_project_editable(self.context["request"].user, obj)
 
+    def to_representation(self, obj):
+        data = super().to_representation(obj)
+        data["updated_by_name"] = obj.updated_by.name if obj.updated_by_id else ""
+        # 5753b5f 审查 R76-P1-01 / P2-04：列表直接给出两条状态线的安全摘要（无金额、无内部/公开说明自由文本），批量计算
+        status_map = self.context.get("status_map")
+        if status_map is not None:
+            data["status"] = status_map.get(obj.id)
+        return data
+
+
+LIST_STATUS_FIELDS = ("code", "label", "is_final", "happened_on", "created_at", "created_by_name", "coverage_stale")
+
+
+def list_status_map(projects):
+    """批量计算项目列表的状态线安全摘要（5753b5f 审查 R76-P1-01）：固定 3 次查询，与项目数无关。
+    只含阶段、发生日期、记录人、系统时间与完结/失效标识；不含 private_note、public_note、金额。"""
+    ids = [p.id for p in projects]
+    if not ids:
+        return {}
+    defs = {(d.track, d.code): d for d in StageDef.objects.all()}
+    orders = {}
+    from apps.contracts.models import OrderConfirmation
+
+    for pid, oid in OrderConfirmation.objects.filter(project_id__in=ids, status="CONFIRMED").values_list("project_id", "id"):
+        orders.setdefault(pid, []).append(oid)
+    latest = {}
+    for ev in TrackEvent.objects.filter(project_id__in=ids, reverted_at__isnull=True).select_related("created_by").order_by("project_id", "track", "-happened_on", "-id"):
+        latest.setdefault((ev.project_id, ev.track), ev)
+    out = {}
+    for p in projects:
+        cur = sorted(orders.get(p.id, []))
+        item = {"won": bool(p.sales_locked_at), "active_order_count": len(cur)}
+        for track in ("DELIVERY", "PAYMENT"):
+            ev = latest.get((p.id, track))
+            if ev is None:
+                item[track.lower()] = None
+                continue
+            d = defs.get((track, ev.code))
+            fin = bool(d and d.is_final)
+            item[track.lower()] = {"code": ev.code, "label": d.label if d else ev.label_snapshot, "is_final": fin, "happened_on": ev.happened_on,
+                                   "created_at": ev.created_at, "created_by_name": ev.created_by.name if ev.created_by else "", "coverage_stale": coverage_stale(ev, fin, cur)}
+        done = [item[k] for k in ("delivery", "payment")]
+        item["all_final"] = all(x and x["is_final"] and not x["coverage_stale"] for x in done)
+        item["needs_reconfirmation"] = any(x and x["coverage_stale"] for x in done)
+        item["tracking"] = (item["won"] or item["active_order_count"] > 0) and not item["all_final"]
+        out[p.id] = item
+    return out
+
 
 class ProjectSerializer(serializers.ModelSerializer):
     """项目详情：参与方、两条进度线、执行节点；**永不**包含报价金额、合同金额与财务字段。"""
@@ -183,8 +231,22 @@ class ProjectViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated()]
         return super().get_permissions()
 
+    def list(self, request, *a, **kw):
+        """项目列表。tracking=1：已中标或已有有效合同、且两条状态线未全部完结的项目（销售“进度”默认入口，5753b5f 审查 R76-P1-01）；
+        tracking=all：已中标或已有有效合同的全部项目（含已完结，不悄悄隐藏）。旧 execution_phase 过滤保留为高级条件。"""
+        projects = list(self.filter_queryset(self.get_queryset()))
+        smap = list_status_map(projects)
+        tr = request.query_params.get("tracking")
+        if tr == "1":
+            projects = [p for p in projects if smap[p.id]["tracking"]]
+        elif tr == "all":
+            projects = [p for p in projects if smap[p.id]["won"] or smap[p.id]["active_order_count"] > 0]
+        elif tr not in (None, ""):
+            raise serializers.ValidationError({"tracking": "只能是 1 或 all"})
+        return Response(ProjectListSerializer(projects, many=True, context={**self.get_serializer_context(), "status_map": smap}).data)
+
     def get_queryset(self):
-        qs = visible_projects(self.request.user).select_related("sales_owner").prefetch_related("parties__account", "members", "milestones")
+        qs = visible_projects(self.request.user).select_related("sales_owner", "updated_by").prefetch_related("parties__account", "members", "milestones")
         p = self.request.query_params
         if q := p.get("q"):
             q = str_param(q, "q", 100)
@@ -487,7 +549,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         need = d.is_final and (n_orders > 1 or stale)
         if need and not covers:
             why = (f"本项目有 {n_orders} 张有效合同/订单，状态线记录的是项目总体状态。" if n_orders > 1
-                   else "上次完结记录之后合同/订单已发生变化（新增、撤销或替换），原完结确认已失效。")
+                   else "原完结记录的覆盖确认已失效（合同/订单有变化，或该记录缺少覆盖确认）。")
             raise BusinessError(f"{why}记录“{d.label}”前请确认已覆盖全部合同/批次（confirm_all_covered）。", code="confirm_coverage_required", http_status=409)
         ev = s.save(project=project, created_by=request.user, label_snapshot=d.label, active_orders_at=n_orders, covers_all_orders=bool(need and covers),
                     covered_order_ids=order_ids)

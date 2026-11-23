@@ -24,6 +24,8 @@ class DashboardView(APIView):
             "role": role_of(u),
             "active_projects": projects.exclude(presale_phase__in=["失标", "成交"]).count(),
             "executing_projects": projects.filter(execution_phase="执行中").count(),
+            # 5753b5f 审查 R76-P1-01：已中标/已签约且两条状态线未全部完结（含中标早于合同、尚未建执行节点的项目）
+            "tracking_projects": _tracking_count(projects),
             "recent_updates": [
                 {"id": x.id, "project_id": x.project_id, "project_name": x.project.name, "stream": x.stream, "title": x.title, "by": x.created_by.name if x.created_by else "", "at": x.happened_at}
                 for x in ProjectUpdate.objects.filter(project__in=projects).select_related("project", "created_by")[:8]
@@ -72,3 +74,10 @@ class DashboardView(APIView):
         data["performance_confirmed"] = performances_for(u).filter(status="CONFIRMED").count()
         data["performance_pending"] = Performance.objects.filter(status="PENDING").count() if can(u, "performance.approve") else None
         return Response(data)
+
+
+def _tracking_count(projects):
+    from apps.projects.views import list_status_map
+
+    cand = list(projects.filter(Q(sales_locked_at__isnull=False) | Q(orders__status="CONFIRMED")).distinct())
+    return sum(1 for v in list_status_map(cand).values() if v["tracking"])

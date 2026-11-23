@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { dt, get, patch, post, qs } from "../api";
+import { dt, get, patch, post, qs, todayBusinessDate } from "../api";
 import { useAuth } from "../auth";
 import { Chip, Field, Loading, Modal, PageHead, useForm, useLoad, useToast } from "../ui";
 
@@ -13,7 +13,7 @@ function InquiryForm({ initial, onClose, onSaved }: { initial?: any; onClose: ()
   const alist = Array.isArray(accounts) ? accounts : accounts?.results || [];
   const f = useForm({
     project: initial?.project ?? "", inquirer: initial?.inquirer ?? "", inquirer_contact: initial?.inquirer_contact || "",
-    received_on: initial?.received_on || new Date().toISOString().slice(0, 10), due_on: initial?.due_on || "", requirement: initial?.requirement || "", status: initial?.status === "CLOSED" ? "CLOSED" : "OPEN",
+    received_on: initial?.received_on || todayBusinessDate(), due_on: initial?.due_on || "", requirement: initial?.requirement || "", status: initial?.status === "CLOSED" ? "CLOSED" : "OPEN",
   });
   const [items, setItems] = useState<any[]>(initial?.items || []);
   const save = async () => {

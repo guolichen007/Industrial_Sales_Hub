@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { get, patch, post, qs } from "../api";
+import { dt, get, patch, post, qs } from "../api";
 import { useAuth } from "../auth";
 import { EXECUTION_PHASES, PRESALE_PHASES } from "../options";
-import { Chip, Field, Loading, Modal, PageHead, useForm, useLoad, useToast } from "../ui";
+import { Chip, Field, Loading, Modal, PageHead, TrackStatusCell, useForm, useLoad, useToast } from "../ui";
 
 export function ProjectForm({ initial, onClose, onSaved }: { initial?: any; onClose: () => void; onSaved: (p: any) => void }) {
   const { can, me } = useAuth();
@@ -96,7 +96,7 @@ export default function Projects() {
         {loading && !list ? <Loading err={err} /> : (
           <div className="tablewrap">
             <table className="data">
-              <thead><tr><th>项目 / 编号</th><th>参与方</th><th>行业 · 主机</th><th>区域</th><th>售前</th><th>执行</th><th>进度</th><th>销售</th><th>权限</th><th>更新</th></tr></thead>
+              <thead><tr><th>项目 / 编号</th><th>参与方</th><th>行业 · 主机</th><th>区域</th><th>售前</th><th>交付 / 资金（项目总体）</th><th>销售</th><th>权限</th><th>资料最后修改</th></tr></thead>
               <tbody>
                 {(list || []).map((p) => (
                   <tr key={p.id}>
@@ -105,14 +105,13 @@ export default function Projects() {
                     <td>{[p.industry, p.machine_type].filter(Boolean).join(" · ") || "—"}</td>
                     <td>{p.region || "—"}</td>
                     <td><Chip s={p.presale_phase} /></td>
-                    <td><Chip s={p.execution_phase} /></td>
-                    <td className="micro">{p.milestone_total ? `${p.milestone_done}/${p.milestone_total}` : "—"}</td>
+                    <td style={{ whiteSpace: "normal", minWidth: 200 }}><TrackStatusCell s={p.status} /></td>
                     <td>{p.sales_owner_name || "—"}</td>
                     <td>{p.can_edit ? <span className="chip">可编辑</span> : <span className="chip gray">只读</span>}</td>
-                    <td className="micro">{new Date(p.updated_at).toLocaleDateString("zh-CN")}</td>
+                    <td className="micro">{dt(p.updated_at, true)}<div>{p.updated_by_name || ""}</div></td>
                   </tr>
                 ))}
-                {list && list.length === 0 && <tr><td colSpan={10} className="empty-cell">没有符合条件的项目</td></tr>}
+                {list && list.length === 0 && <tr><td colSpan={9} className="empty-cell">没有符合条件的项目</td></tr>}
               </tbody>
             </table>
           </div>

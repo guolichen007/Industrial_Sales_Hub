@@ -1,16 +1,16 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { get, post, qs } from "../api";
+import { get, post, qs, todayBusinessDate } from "../api";
 import { useAuth } from "../auth";
 import { EXECUTION_PHASES, msLabel } from "../options";
-import { Chip, Field, Loading, Modal, PageHead, useForm, useLoad, useToast } from "../ui";
+import { Chip, Field, Loading, Modal, PageHead, TrackStatusCell, useForm, useLoad, useToast } from "../ui";
 
 export function OrderForm({ project, quotes, onClose, onSaved }: { project: any; quotes: any[]; onClose: () => void; onSaved: () => void }) {
   const { can, me } = useAuth();
   const { notify, fail } = useToast();
   const [ents] = useLoad(() => get<any[]>("/legal-entities/"), []);
   const [key] = useState(() => `ord-${project.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-  const f = useForm({ basis: "CONTRACT", quote: "", legal_entity: "", order_ref: "", signed_on: new Date().toISOString().slice(0, 10), contract_amount: "", product_summary: "", reason: "" });
+  const f = useForm({ basis: "CONTRACT", quote: "", legal_entity: "", order_ref: "", signed_on: todayBusinessDate(), contract_amount: "", product_summary: "", reason: "" });
   const [busy, setBusy] = useState(false);
   const leaderOnly = f.v.basis === "LEADER" || me!.flags.performance_confirm_mode === "AND";
   const canConfirmNow = !leaderOnly || can("performance.approve");
@@ -69,8 +69,10 @@ export function OrderForm({ project, quotes, onClose, onSaved }: { project: any;
 export default function Execution() {
   const { can } = useAuth();
   const { notify, fail } = useToast();
-  const [exec, setExec] = useState("执行中");
-  const [projects, , loading, err] = useLoad(() => get<any[]>("/projects/" + qs({ execution_phase: exec })), [exec], 30000);
+  // 5753b5f 审查 R76-P1-01：默认“中标跟踪中”（已中标或已签约、未全部完结），可切换“含已完结”；旧执行阶段保留为高级筛选
+  const [scope, setScope] = useState("1");
+  const [exec, setExec] = useState("");
+  const [projects, , loading, err] = useLoad(() => get<any[]>("/projects/" + qs({ tracking: scope, execution_phase: exec })), [scope, exec], 30000);
   const [orders, reloadOrders] = useLoad(() => (can("order.access") ? get<any[]>("/order-confirmations/") : Promise.resolve([])), [], 30000);
   const confirm_ = async (o: any) => {
     try {
@@ -107,11 +109,14 @@ export default function Execution() {
     <>
       <PageHead k="PROJECT EXECUTION" title="项目执行" sub={can("update.execution.write") ? "中标后的执行进度由商务助理与财务更新；销售可随时查看。页面每 30 秒自动刷新。" : "查看已签约项目的执行进度（安全摘要，不含金额）。页面每 30 秒自动刷新。"} />
       <div className="toolbar">
-        <select className="select" value={exec} onChange={(e) => setExec(e.target.value)}><option value="">全部</option>{EXECUTION_PHASES.map((x) => <option key={x}>{x}</option>)}</select>
+        <select className="select" value={scope} onChange={(e) => setScope(e.target.value)} title="项目范围">
+          <option value="1">中标跟踪中（默认）</option><option value="all">全部已中标/已签约（含已完结）</option>
+        </select>
+        <select className="select" value={exec} onChange={(e) => setExec(e.target.value)} title="旧执行阶段（高级筛选）"><option value="">执行阶段：不限</option>{EXECUTION_PHASES.map((x) => <option key={x}>{x}</option>)}</select>
       </div>
       <div className="grid">
         {loading && !projects ? <Loading err={err} /> : (projects || []).map((p) => <ExecCard key={p.id} p={p} />)}
-        {projects && projects.length === 0 && <div className="card"><div className="empty">没有处于该执行阶段的项目</div></div>}
+        {projects && projects.length === 0 && <div className="card"><div className="empty">没有符合条件的项目</div></div>}
       </div>
       {can("order.access") && (
         <div className="card cardpad" style={{ marginTop: 20 }}>
@@ -149,13 +154,14 @@ function ExecCard({ p }: { p: any }) {
     <div className="card cardpad">
       <div className="sectionhead">
         <div><Link className="link" to={`/projects/${p.id}`} style={{ fontWeight: 750 }}>{p.name}</Link> <span className="micro">{p.code} · {p.sales_owner_name}</span></div>
-        <Chip s={p.execution_phase} />
+        <span><Chip s={p.execution_phase} /></span>
       </div>
+      {!d && p.status && <TrackStatusCell s={p.status} />}
       {d?.tracks && (d.tracks.delivery || d.tracks.payment) && (
         <div className="micro" style={{ marginBottom: 6 }}>
           项目总体状态：生产/交付 <b>{d.tracks.delivery?.label || "—"}</b> ｜ 资金 <b>{d.tracks.payment?.label || "—"}</b>
           {d.tracks.multi_order && <span style={{ color: "#8a5a12" }}>（本项目 {d.tracks.active_order_count} 张有效合同/订单，非各合同各自状态）</span>}
-          {d.tracks.needs_reconfirmation && <b style={{ color: "#b55c5c" }}> · 完结确认已失效，需重新确认</b>}
+          {d.tracks.needs_reconfirmation && <b style={{ color: "#b55c5c" }}> · 完结需重新确认（合同变化或缺少覆盖确认）</b>}
         </div>
       )}
       {d ? (d.milestones.length ? (

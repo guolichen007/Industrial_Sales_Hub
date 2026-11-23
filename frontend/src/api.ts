@@ -120,3 +120,13 @@ export function dt(v?: string | null, withTime = false) {
   const s = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   return withTime ? `${s} ${p(d.getHours())}:${p(d.getMinutes())}` : s;
 }
+
+/** 系统业务时区（与后端 TIME_ZONE 一致）。表单默认“今天”一律按此时区取日期，
+ * 不能用 toISOString()（UTC）截取——北京时间 00:00–07:59 会得到前一天（5753b5f 审查 R76-P1-02）。 */
+export const BUSINESS_TZ = "Asia/Shanghai";
+
+export function todayBusinessDate(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: BUSINESS_TZ, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value || "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}

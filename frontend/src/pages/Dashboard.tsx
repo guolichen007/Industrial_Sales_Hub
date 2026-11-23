@@ -2,7 +2,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { dt, get } from "../api";
 import { useAuth } from "../auth";
 import { msLabel } from "../options";
-import { Chip, Loading, PageHead, useLoad } from "../ui";
+import { Chip, Loading, PageHead, TrackStatusCell, useLoad } from "../ui";
 
 function Kpis({ items }: { items: [string, any, string][] }) {
   return (
@@ -28,18 +28,17 @@ function ProjectTable({ projects, title, empty }: { projects: any[] | undefined;
       </div>
       <div className="tablewrap">
         <table className="data">
-          <thead><tr><th>项目 / 编号</th><th>售前阶段</th><th>执行阶段</th><th>执行进度</th><th>销售</th></tr></thead>
+          <thead><tr><th>项目 / 编号</th><th>售前阶段</th><th>交付 / 资金（项目总体）</th><th>销售</th></tr></thead>
           <tbody>
             {(projects || []).slice(0, 8).map((p) => (
               <tr key={p.id}>
                 <td><Link className="link" to={`/projects/${p.id}`}>{p.name}</Link><div className="micro">{p.code}</div></td>
                 <td><Chip s={p.presale_phase} /></td>
-                <td><Chip s={p.execution_phase} /></td>
-                <td className="micro">{p.milestone_total ? `${p.milestone_done}/${p.milestone_total}` : "—"}</td>
+                <td><TrackStatusCell s={p.status} /></td>
                 <td>{p.sales_owner_name || "—"}</td>
               </tr>
             ))}
-            {projects && projects.length === 0 && <tr><td colSpan={5} className="empty-cell">{empty}</td></tr>}
+            {projects && projects.length === 0 && <tr><td colSpan={4} className="empty-cell">{empty}</td></tr>}
           </tbody>
         </table>
       </div>
@@ -140,7 +139,8 @@ export default function Dashboard() {
   const role = me!.role;
   const [d, , loading, err, status] = useLoad(() => (role === "ADMIN" ? Promise.resolve(null) : get("/dashboard/")), [role], 30000);
   const [projects] = useLoad(() => (role === "ADMIN" ? Promise.resolve([]) : get<any[]>("/projects/" + (role === "SALES" ? "?mine=1" : ""))), [role], 30000);
-  const [team] = useLoad(() => (role === "SALES" ? get<any[]>("/projects/?execution_phase=执行中") : Promise.resolve([])), [role], 30000);
+  // 5753b5f 审查 R76-P1-01：已中标/已签约且未完结的项目（含中标早于合同、只有交付/资金状态线的项目），不再依赖旧 execution_phase
+  const [team] = useLoad(() => (role === "SALES" ? get<any[]>("/projects/?tracking=1") : Promise.resolve([])), [role], 30000);
   if (role === "ADMIN") return <AdminHome />;
   if (loading && !d) return <Loading err={err} status={status} />;
   if (!d) return <Loading err={err} status={status} />;
@@ -151,13 +151,13 @@ export default function Dashboard() {
         <PageHead k="MY WORKSPACE" title="我的销售工作台" sub="我的项目与跟进、全团队执行进度、我的业绩与可公开案例。销售不处理报价与金额。">
           <button className="btn primary" onClick={() => nav("/projects?new=1")}>+ 登记新项目</button>
         </PageHead>
-        <Kpis items={[["我负责/参与的项目", d.my_projects, "可编辑"], ["全团队活跃项目", d.active_projects, "可查看公共进度"], ["执行中项目", d.executing_projects, "商务/财务更新，随时可看"], ["我的已确认业绩", d.performance_confirmed, "内部业绩按归属授权"]]} />
+        <Kpis items={[["我负责/参与的项目", d.my_projects, "可编辑"], ["全团队活跃项目", d.active_projects, "可查看公共进度"], ["中标跟踪中项目", d.tracking_projects, "交付/资金状态，商务/财务更新"], ["我的已确认业绩", d.performance_confirmed, "内部业绩按归属授权"]]} />
         <div className="split">
           <ProjectTable projects={projects} title="我的项目" empty="还没有项目，点击右上角登记" />
           <Todos d={d} />
         </div>
         <div className="grid cols2" style={{ marginTop: 18 }}>
-          <ProjectTable projects={team} title="全团队执行中项目（公共进度）" empty="暂无执行中项目" />
+          <ProjectTable projects={team} title="全团队中标跟踪项目（公共进度）" empty="暂无中标后跟踪中的项目" />
           <div className="grid" style={{ alignContent: "start" }}>
             <Timeline d={d} />
             <div className="card cardpad"><div className="sectionhead"><h2>案例与业绩</h2></div><div className="actions"><Link className="btn" to="/performance">我的业绩</Link><Link className="btn" to="/cases">搜索可公开案例</Link></div></div>

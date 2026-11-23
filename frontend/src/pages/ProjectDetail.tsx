@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { del, dt, get, money, patch, post } from "../api";
+import { del, dt, get, money, patch, post, todayBusinessDate } from "../api";
 import { useAuth } from "../auth";
 import { MILESTONE_STATES, PARTY_ROLES, PRESALE_PHASES, msLabel } from "../options";
 import { Chip, Field, Loading, Modal, useForm, useLoad, useToast } from "../ui";
@@ -111,15 +111,15 @@ function TrackPanel({ p, onChanged }: { p: any; onChanged: () => void }) {
   const cell = (tr: string, x: any) => (
     <div className="choice" style={{ flex: 1 }}>
       <h3>{tr === "DELIVERY" ? "生产/交付" : "资金状态"}</h3>
-      {x ? <><Chip s={x.label} cls={x.is_final ? "" : "blue"} />{x.coverage_stale ? <span className="micro" style={{ color: "#b55c5c" }}> · 完结确认已失效（合同/订单已变化）</span> : x.covers_all_orders && <span className="micro"> · 已确认覆盖全部合同/批次</span>}<div className="micro" style={{ marginTop: 6 }}>发生：{dt(x.happened_on)} ｜ 记录：{x.created_by_name} {dt(x.created_at, true)}</div>
+      {x ? <><Chip s={x.label} cls={x.is_final ? "" : "blue"} />{x.coverage_stale ? <span className="micro" style={{ color: "#b55c5c" }}> · 完结需重新确认（合同变化或缺少覆盖确认）</span> : x.covers_all_orders && <span className="micro"> · 已确认覆盖全部合同/批次</span>}<div className="micro" style={{ marginTop: 6 }}>发生：{dt(x.happened_on)} ｜ 记录：{x.created_by_name} {dt(x.created_at, true)}</div>
         {x.public_note && <div className="sub">{x.public_note}</div>}{x.private_note && <div className="micro" style={{ color: "#8a5a12" }}>内部：{x.private_note}</div>}</> : <div className="sub">尚无记录</div>}
-      {canTrack(tr) && <button className="btn mini soft" style={{ marginTop: 6 }} onClick={() => setForm({ track: tr, code: "", happened_on: new Date().toISOString().slice(0, 10), public_note: "", private_note: "" })}>+ 记录{tr === "DELIVERY" ? "交付" : "资金"}状态</button>}
+      {canTrack(tr) && <button className="btn mini soft" style={{ marginTop: 6 }} onClick={() => setForm({ track: tr, code: "", happened_on: todayBusinessDate(), public_note: "", private_note: "" })}>+ 记录{tr === "DELIVERY" ? "交付" : "资金"}状态</button>}
     </div>
   );
   return (
     <div className="card cardpad">
       <div className="sectionhead"><h2>交付与资金状态（项目总体）</h2><small>两条状态线互不覆盖 · 不含任何金额{t.delivery_overdue && <b style={{ color: "#b55c5c" }}> · 交付已逾期</b>}</small></div>
-      {t.needs_reconfirmation && <div className="warnnote" style={{ marginBottom: 8, borderColor: "#b55c5c" }}><b>完结确认已失效：</b>记录完结后合同/订单发生了变化（新增、撤销或替换）。当前“已交付/已结清”不代表已覆盖全部合同，请商务/财务核实后重新记录并确认覆盖。</div>}
+      {t.needs_reconfirmation && <div className="warnnote" style={{ marginBottom: 8, borderColor: "#b55c5c" }}><b>完结需重新确认：</b>当前“已交付/已结清”的覆盖确认已失效——可能因为记录完结后合同/订单有变化（新增、撤销或替换），或该记录产生时有多张合同却缺少“覆盖全部合同”的确认（例如升级前的历史数据）。在重新确认前，它不代表已覆盖全部合同；请商务/财务核实后重新记录并勾选覆盖确认。</div>}
       {t.multi_order && <div className="warnnote" style={{ marginBottom: 8 }}>本项目有 {t.active_order_count} 张有效合同/订单。下面是<b>项目总体状态</b>，不是每张合同或每个批次各自的状态；各合同/批次的差异请写在说明中。</div>}
       {!won ? <div className="sub">中标确认/转交商务后开始记录。</div> : <div className="rowactions" style={{ alignItems: "stretch" }}>{cell("DELIVERY", t.delivery)}{cell("PAYMENT", t.payment)}</div>}
       {won && <button className="btn mini" style={{ marginTop: 8 }} onClick={() => get<any>(`/projects/${p.id}/tracks/`).then((d) => setHist(d.events)).catch(fail)}>状态历史</button>}
@@ -147,7 +147,7 @@ function TrackPanel({ p, onChanged }: { p: any; onChanged: () => void }) {
             {needCover && (
               <label className="formfield full" style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
                 <input type="checkbox" checked={!!form.confirm_all_covered} onChange={(e) => setForm({ ...form, confirm_all_covered: e.target.checked })} />
-                <span>{t.needs_reconfirmation ? `上次完结记录后合同/订单已变化（当前 ${t.active_order_count} 张有效）。` : `本项目有 ${t.active_order_count} 张有效合同/订单。`}我确认“{(stages || []).find((d: any) => d.track === form.track && d.code === form.code)?.label}”已覆盖<b>全部</b>合同/批次（将记录操作人与时间）。</span>
+                <span>{t.needs_reconfirmation ? `原完结的覆盖确认已失效（合同变化或缺少覆盖确认；当前 ${t.active_order_count} 张有效合同/订单）。` : `本项目有 ${t.active_order_count} 张有效合同/订单。`}我确认“{(stages || []).find((d: any) => d.track === form.track && d.code === form.code)?.label}”已覆盖<b>全部</b>合同/批次（将记录操作人与时间）。</span>
               </label>
             )}
           </div>
