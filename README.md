@@ -18,7 +18,7 @@
 |---|---|
 | [`docs/RC3-用户操作手册.md`](docs/RC3-用户操作手册.md) | 两板块日常业务操作（销售、商务、财务、负责人） |
 | [`docs/RC3-业务角色与字段矩阵.md`](docs/RC3-业务角色与字段矩阵.md) | 业务口径、角色请求矩阵（CI 验证）、字段级规则 |
-| [`docs/RC3-Windows实机验收手册.md`](docs/RC3-Windows实机验收手册.md) | RC3 增补 T17–T21 与两机 UAT U1–U10 |
+| [`docs/RC3-Windows实机验收手册.md`](docs/RC3-Windows实机验收手册.md) | RC3 增补 T17–T21 与两机 UAT U1–U14（含首期收口 C1～C4 现场验收） |
 | [`docs/LAN安装使用手册.md`](docs/LAN安装使用手册.md) | Windows 主机从零安装、首次使用、日常运维、HTTPS、常见问题 |
 | [`docs/备份恢复与升级手册.md`](docs/备份恢复与升级手册.md) | 运维互斥、一致性备份、恢复演练、可回退正式恢复、独立升级器与回滚 |
 | [`docs/RC2-Windows实机验收手册.md`](docs/RC2-Windows实机验收手册.md) | Windows 11 测试机逐步命令与证据清单（R4） |
