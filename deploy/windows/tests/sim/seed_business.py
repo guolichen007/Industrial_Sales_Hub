@@ -3,6 +3,7 @@ import hashlib
 from decimal import Decimal
 
 from apps.accounts.models import User
+from apps.common.errors import BusinessError
 from apps.common.pdfkit import store_private
 from apps.files.models import Attachment
 from apps.organizations.models import Account, LegalEntity
@@ -25,8 +26,8 @@ rev = q.revisions.create(version=1, quote_date=timezone.localdate(), price_basis
 QuoteLine.objects.create(revision=rev, model=prod.model, name=prod.name, unit="台", qty=Decimal("2"), unit_price=Decimal("1000"))
 try:
     services.generate_revision(rev.id, leader)
-except Exception as e:  # RC2+：模板未签收只能生成试用 PDF（模拟数据不伪造签收）
-    if getattr(e, "code", "") != "template_unsigned":
+except BusinessError as e:  # RC2+：模板未签收只能生成试用 PDF（模拟数据不伪造签收）
+    if e.biz_code != "template_unsigned":
         raise
     services.generate_revision(rev.id, leader, trial=True)
 data = b"\x89PNG" + bytes(range(256)) * 40

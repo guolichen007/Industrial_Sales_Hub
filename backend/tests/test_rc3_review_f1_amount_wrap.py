@@ -10,12 +10,13 @@
 import re
 import subprocess
 import tempfile
+import xml.etree.ElementTree as ET
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
 from apps.organizations.models import LegalEntity, TemplateSignoff
-from apps.quotations import pdf as pdfmod
 from apps.quotations.models import QuoteRevision
 from apps.quotations.pdf import TEMPLATE_VERSION, AmountTooWide, _fit_font_size, money_fmt, plain
 
@@ -30,18 +31,15 @@ LADDER = [
 
 
 def _layout(pdf: bytes):
-    with tempfile.NamedTemporaryFile(suffix=".pdf") as f:
-        f.write(pdf)
-        f.flush()
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "quote.pdf"
+        path.write_bytes(pdf)
         try:
-            out = subprocess.run(["pdftotext", "-layout", f.name, "-"], capture_output=True, text=True, timeout=60).stdout
+            out = subprocess.check_output(["pdftotext", "-layout", path, "-"], encoding="utf-8", timeout=60)
+            bounds = subprocess.check_output(["pdftotext", "-bbox", path, "-"], timeout=60)
         except FileNotFoundError:
             pytest.skip("需要 pdftotext")
-    return out.splitlines()
-
-
-def _on_one_line(lines, s):
-    return any(s in ln for ln in lines)
+    return out.splitlines(), ET.fromstring(bounds).findall(".//{*}page")
 
 
 def _make_quote(c, base, ent, lines, **rev):
@@ -55,16 +53,47 @@ def _make_quote(c, base, ent, lines, **rev):
     return rid
 
 
-def _expected_amounts(snap):
-    """模板将渲染的全部金额字符串（与 pdf._totals_block / 明细列一致）。"""
+def _assert_amount_layout(pdf, snap):
+    lines, pages = _layout(pdf)
     fmt = money_fmt if snap["template_key"] == "A" else plain
-    out = [fmt(snap["totals"]["set_gross"])]
+    tokens = [line.split() for line in lines]
+    for number, item in enumerate(snap["lines"], 1):
+        model = item["model"]
+        amounts = [fmt(item["unit_price"]), fmt(item["amount"])]
+        rows = [row for row in tokens if model in row]
+        assert len(rows) == 1, (model, rows)
+        row = rows[0]
+        assert row[0] == str(number) and row[-2:] == amounts, (model, amounts, row)
+
+        # 以型号的纵坐标定位同页金额，检查两个金额的左右边界与顺序。
+        (anchor,) = [(page, word) for page in pages for word in page.findall("{*}word") if word.text == model]
+        page, word = anchor
+        center = (float(word.get("yMin")) + float(word.get("yMax"))) / 2
+        cells = sorted(
+            (float(cell.get("xMin")), float(cell.get("xMax")), cell.text)
+            for cell in page.findall("{*}word")
+            if cell.text in amounts and float(cell.get("xMin")) >= float(word.get("xMax"))
+            and float(cell.get("yMin")) <= center <= float(cell.get("yMax"))
+        )
+        assert [cell[2] for cell in cells] == amounts, (model, amounts, cells)
+        assert 0 < cells[0][0] < cells[0][1] <= cells[1][0] < cells[1][1] < float(page.get("width")), (model, cells)
+
+    label = "总价" if snap["template_key"] == "A" else "合计"
+    totals = snap["totals"]
+    expected = []
     if snap.get("show_tax_breakdown"):
-        out += [fmt(snap["totals"]["set_net"]), fmt(snap["totals"]["set_tax"])]
-    if int(snap.get("host_qty") or 1) > 1:
-        out.append(fmt(snap["totals"]["gross"]))
-    out += [fmt(ln["amount"]) for ln in snap["lines"]]
-    return out
+        expected += [("未税合计", totals["set_net"]), ("税额", totals["set_tax"])]
+        label += "（含税）"
+    expected.append((label, totals["set_gross"]))
+    host_qty = int(snap.get("host_qty") or 1)
+    if host_qty > 1:
+        expected.append((f"{host_qty}{snap.get('host_label') or '台'}总计", totals["gross"]))
+    for label, amount in expected:
+        label_pattern = r"\s*".join(map(re.escape, f"{label}："))
+        pattern = rf"\s*{label_pattern}\s*{re.escape(fmt(amount))}\s*"
+        matches = [line for line in lines if re.fullmatch(pattern, line)]
+        assert len(matches) == 1, (label, fmt(amount), matches)
+    return lines
 
 
 # ------------------------------------------------------------------ 单元：适配函数确定性 + 阻断
@@ -118,35 +147,32 @@ def test_amounts_stay_on_single_line(client_for, base, users, code, basis, tag, 
     r = c.post(f"/api/quote-revisions/{rid}/render/")
     assert r.status_code == 200, r.content[:300]
     pdf = c.get(f"/api/quote-revisions/{rid}/pdf/").content
-    lines = _layout(pdf)
     rev = QuoteRevision.objects.get(pk=rid)
-    expected = _expected_amounts(rev.snapshot)
-    missing = [s for s in expected if not _on_one_line(lines, s)]
-    assert not missing, f"{code}/{basis}/{tag}: 金额未单行完整显示（折行或裁切）：{missing}"
+    _assert_amount_layout(pdf, rev.snapshot)
     # 金额算法不变：DB 汇总与冻结快照一致（版式修改不得改变任何金额）
     assert Decimal(rev.snapshot["totals"]["gross"]) == rev.total_gross
 
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("code", ["A", "B", "C"])
-def test_long_45_lines_with_large_amount_still_single_line(client_for, base, users, code):
+@pytest.mark.parametrize("basis", ["NET", "GROSS"])
+def test_long_45_lines_with_large_amount_still_single_line(client_for, base, users, code, basis):
     """45 行长单 + 含大额行：分页正常、大额仍单行完整。"""
     from tests.conftest import sign_template
 
     ent = LegalEntity.objects.get(code=code)
-    ent.price_basis, ent.show_tax_columns = "NET", True
+    ent.price_basis, ent.show_tax_columns = basis, basis == "NET"
     ent.save()
     sign_template(ent, users["leader"])
     c = client_for("assistant")
-    lines = [{"name": f"清单项{i}", "model": f"M-{i:03d}", "unit": "件", "qty": "1", "unit_price": "10"} for i in range(44)]
+    lines = [{"name": f"清单项{i}", "model": f"M-{i:03d}", "unit": "件", "qty": "2", "unit_price": str(10 + i)} for i in range(44)]
     lines.append({"name": "大额行", "model": "BIG", "unit": "台", "qty": "1", "unit_price": "2261699465.25"})
     rid = _make_quote(c, base, ent, lines, host_qty=2)
     assert c.post(f"/api/quote-revisions/{rid}/render/").status_code == 200
     pdf = c.get(f"/api/quote-revisions/{rid}/pdf/").content
-    lines_out = _layout(pdf)
     rev = QuoteRevision.objects.get(pk=rid)
-    for s in _expected_amounts(rev.snapshot):
-        assert _on_one_line(lines_out, s), f"{code}: 大额未单行：{s}"
+    assert len(rev.snapshot["lines"]) == 45
+    lines_out = _assert_amount_layout(pdf, rev.snapshot)
     n = len(re.findall(rb"/Type /Page[^s]", pdf))
     assert n >= 2 and f"第{n}页/共{n}页" in re.sub(r"\s+", "", "\n".join(lines_out))
 

@@ -113,13 +113,14 @@ import json, sys
 b, a = json.loads(sys.argv[1]), json.loads(sys.argv[2])
 # 升级会新增迁移与新表（行数 0）；业务比较：升级前已有的每张表行数、全部私有文件哈希、全部已生成报价 PDF 哈希必须完全一致
 same = all(a["counts"].get(k) == v for k, v in b["counts"].items()) and a["files"] == b["files"] and a["pdfs"] == b["pdfs"] and set(b["migrations"]) <= set(a["migrations"])
+print("旧版冻结 PDF SHA256（升级前 / 升级后）：", b["pdfs"], "/", a["pdfs"])
 new_tables = {k: v for k, v in a["counts"].items() if k not in b["counts"]}
 print("新增表：", new_tables, "新增迁移：", sorted(set(a["migrations"]) - set(b["migrations"])))
 # 唯一允许带种子数据的新表：RC3 默认阶段定义（迁移 projects.0004 写入 12 条：交付 7 + 资金 5）
 SEEDED = {"projects.StageDef": 12}
 bad_counts = {k: (v, a["counts"].get(k)) for k, v in b["counts"].items() if a["counts"].get(k) != v}
 print("原有表行数变化：", bad_counts)
-sys.exit(0 if same and all(v == SEEDED.get(k, 0) for k, v in new_tables.items()) else 1)
+sys.exit(0 if same and b["pdfs"] and all(v == SEEDED.get(k, 0) for k, v in new_tables.items()) else 1)
 PY
 check $? "业务数据（原有表行数）/PDF/附件哈希升级前后一致；新增迁移为纯增量（仅默认阶段表带种子）"
 ls -d $INST/backups/ish-backup-*-pre-upgrade-* >/dev/null 2>&1; check $? "存在 pre-upgrade 备份（旧程序生成）"
@@ -268,7 +269,8 @@ PY
 check $? "f4p: 篡改备份 manifest（加入未来迁移）"
 ps_run $INST/scripts/restore.ps1 -BackupPath $BK -Production -Yes > $EV/f4p-restore.log 2>&1; rc=$?
 check $([[ $rc == 40 ]]; echo $?) "f4p: 前置拒绝 → 退出码 40（安全重启，非 42 保持停止）rc=$rc"
-check $([[ -n "$(health)" ]]; echo $?) "f4p: 前置拒绝后应用已安全重新启动（healthz 可用）"
+curl -fsS --max-time 5 http://127.0.0.1:8100/healthz | python3 -c 'import json,sys; h=json.load(sys.stdin); sys.exit(not (h["status"] == "ok" and h["maintenance"] is False))'
+check $? "f4p: 前置拒绝后 healthz HTTP 200 且非维护状态"
 check $([[ "$(fp $INST)" == "$B" ]]; echo $?) "f4p: 前置拒绝后正式数据未改动"
 J=$(ls -t $INST/data/ops/restore-*.json | head -1)
 ST=$(python3 -c "import json;print(json.load(open('$J'))['state'])")
@@ -276,6 +278,26 @@ check $([[ $ST == FAILED_PRECHECK ]]; echo $?) "f4p: 恢复日志终态 FAILED_P
 check $([[ ! -f $INST/data/MAINTENANCE ]]; echo $?) "f4p: 未遗留维护标记（未手工删除，程序自管）"
 LEFT=$(PGPASSWORD=$PGPASS_SAVE psql -h 127.0.0.1 -U ish -d postgres -tAc "SELECT count(*) FROM pg_database WHERE datname LIKE 'ishsim_rst_%'")
 check $([[ $LEFT == 0 ]]; echo $?) "f4p: 未遗留 staging 库（left=$LEFT）"
+
+# 写入独立测试安装的遗留标记，分别保留运行中维护和停止保护状态。
+MARKER=$INST/data/MAINTENANCE
+printf '{"token":"sim-old-upgrade","task":"upgrade","pid":0}\r\n' > "$MARKER"
+MARKER_BEFORE=$(sha256sum "$MARKER")
+for state in running stopped; do
+  if [[ $state == stopped ]]; then
+    bash "$(dirname "$0")/simhook.sh" stop IndustrialSalesHub-App "$INST"
+  fi
+  CALLS_BEFORE=$(sha256sum "$INST/logs/sim-services.log")
+  ps_run "$INST/scripts/restore.ps1" -BackupPath "$BK" -Production -Yes > "$EV/f4-legacy-$state.log" 2>&1; rc=$?
+  check $([[ $rc == 42 && "$(sha256sum "$INST/logs/sim-services.log")" == "$CALLS_BEFORE" ]]; echo $?) "f4 legacy $state: rc=$rc 且未调用服务操作"
+  if [[ $state == running ]]; then
+    curl -fsS --max-time 5 http://127.0.0.1:8100/healthz | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin)["maintenance"] is not True)'
+    check $? "f4 legacy running: 应用仍在维护中"
+  else
+    check $([[ -z "$(health)" ]]; echo $?) "f4 legacy stopped: 应用仍停止"
+  fi
+  check $([[ "$(sha256sum "$MARKER")" == "$MARKER_BEFORE" && -n "$B" && "$(fp "$INST")" == "$B" ]]; echo $?) "f4 legacy $state: 标记字节、PostgreSQL 与私有文件指纹不变"
+done
 fi
 
 bash $(dirname "$0")/simhook.sh stop IndustrialSalesHub-App $INST >/dev/null 2>&1

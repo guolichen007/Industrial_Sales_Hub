@@ -1,4 +1,4 @@
-# RC3 定向整改 F-4 PowerShell 单元测试：恢复失败后的可用性判定（Windows PowerShell 5.1 与 PowerShell 7 均可运行；
+﻿# RC3 定向整改 F-4 PowerShell 单元测试：恢复失败后的可用性判定（Windows PowerShell 5.1 与 PowerShell 7 均可运行；
 #   不需要管理员、不修改系统、不需要数据库）。
 #   验证 Get-RestoreRecoveryDecision 的状态映射：前置拒绝/无日志/已安全回退 → 可安全恢复应用服务(RESTART)；
 #   正在恢复/回退失败/状态不确定 → 保持保护(PROTECT)。仅抽取该纯函数，避免 dot-source 整个 common.ps1 的初始化副作用。

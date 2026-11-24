@@ -113,7 +113,7 @@ jobs:
         shell: powershell
         run: |
           $errs = 0
-          Get-ChildItem deploy/windows/scripts/*.ps1 | ForEach-Object {
+          Get-ChildItem -Path deploy/windows/scripts,deploy/windows/tests -Filter *.ps1 -File -Recurse | ForEach-Object {
             $t = $null; $e = $null
             [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$t, [ref]$e) | Out-Null
             if ($e.Count) { $errs++; $e | ForEach-Object { Write-Host "$($_.Extent.File):$($_.Extent.StartLineNumber) $($_.Message)" } }
@@ -127,6 +127,8 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windows/tests/unit-rc3-vc.ps1
           if ($LASTEXITCODE) { exit 1 }
           powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windows/tests/unit-f4-recovery.ps1
+          if ($LASTEXITCODE) { exit 1 }
+          powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windows/tests/unit-f4-restore-wrapper.ps1
           if ($LASTEXITCODE) { exit 1 }
       - name: PSScriptAnalyzer
         shell: pwsh

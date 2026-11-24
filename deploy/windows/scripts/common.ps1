@@ -97,6 +97,7 @@ function Invoke-Manage([string[]]$ManageArgs, [switch]$AllowFail, [hashtable]$Ex
 }
 
 function Get-ServiceState([string]$name) {
+    if (Test-SimPlatform) { return (& $env:ISH_SIM_HOOK 'state' $name $script:Root) }
     $s = Get-Service -Name $name -ErrorAction SilentlyContinue
     if ($null -eq $s) { return 'NotInstalled' }
     return [string]$s.Status

@@ -48,6 +48,10 @@ $tok, $busy = Enter-OpsLock 'restore' 0
 if (-not $tok) { Fail $busy 75 }
 $exitCode = 0
 try {
+    $maintenance = Join-Path $Data 'MAINTENANCE'
+    if (Test-Path -LiteralPath $maintenance) {
+        Fail '检测到遗留维护标记，已拒绝发起新恢复并保留原应用状态。请运行 06-检查系统 并按《备份恢复与升级手册》第 6 节处理。' 42
+    }
     $before = @(Get-ChildItem -LiteralPath $OpsDir -Filter 'restore-*.json' -ErrorAction SilentlyContinue | ForEach-Object Name)
     Write-Step '停止应用（数据库保持运行）'
     Stop-IshService $SvcApp
@@ -69,9 +73,30 @@ try {
                 'ROLLED_BACK' { '已自动回退到恢复前状态' }
                 default { '恢复未执行（无恢复日志）' }
             }
-            Write-Warn2 "恢复未成功（$why；退出码 $rc，恢复 ID $rid）：正式数据保持恢复前状态，已恢复应用服务。原因见上方日志。"
-            Start-IshService $SvcApp
-            $exitCode = 40
+            $exitCode = 42
+            if (Test-Path -LiteralPath $maintenance) {
+                Write-Warn2 "恢复未成功（$why；退出码 $rc，恢复 ID $rid）：检测到维护标记。应用保持停止，请按手册第 6 节处理。"
+            } else {
+                try {
+                    Start-IshService $SvcApp
+                    if ((Get-ServiceState $SvcApp) -ne 'Running') { throw '应用服务未处于 Running 状态' }
+                    $port = [int]($cfg['ISH_LISTEN'] -split ':')[-1]
+                    $body = Wait-Http "http://127.0.0.1:$port/healthz" 120
+                    if (-not $body) { throw 'healthz 未返回 HTTP 200' }
+                    $health = $body | ConvertFrom-Json
+                    if ($health.status -cne 'ok' -or $health.maintenance -isnot [bool] -or $health.maintenance) {
+                        throw 'healthz 未确认应用处于正常且非维护状态'
+                    }
+                    if ((Test-Path -LiteralPath $maintenance) -or (Get-ServiceState $SvcApp) -ne 'Running') {
+                        throw '应用服务或维护状态在探活期间发生变化'
+                    }
+                    Write-Warn2 "恢复未成功（$why；退出码 $rc，恢复 ID $rid）：正式数据保持恢复前状态，已恢复应用服务。原因见上方日志。"
+                    $exitCode = 40
+                } catch {
+                    Write-Warn2 "恢复未成功（$why；退出码 $rc，恢复 ID $rid）：应用启动或探活失败：$($_.Exception.Message)"
+                    try { Stop-IshService $SvcApp } catch { Write-Warn2 "无法确认应用已停止：$($_.Exception.Message)" }
+                }
+            }
         } else {
             Write-Warn2 "恢复失败且状态不确定或自动回退未完成（日志状态 $state，恢复 ID $rid）。应用保持停止；请勿改动 data 目录，按《备份恢复与升级手册》第 6 节处理：05-恢复备份.bat -Rollback $rid"
             $exitCode = 42
