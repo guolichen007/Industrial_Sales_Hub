@@ -246,6 +246,38 @@ ps_run $INST/scripts/restore.ps1 -Rollback $RID -Yes > $EV/r-undo.log 2>&1; chec
 check $([[ "$(fp $INST)" == "$M" ]]; echo $?) "撤销后数据 = 恢复前"
 fi
 
+# ---------------------------------------------------------------- 7. F-4 前置拒绝：包装层应安全重启应用（不是无谓保持停止）
+if want f4precheck; then
+note "## 场景 f4precheck：前置拒绝（备份版本不兼容）→ 安全重启应用(40)，日志 FAILED_PRECHECK，不遗留 RUNNING"
+install_old $SIM/pkg-rc3 ishsim
+ps_run $INST/scripts/backup.ps1 > $EV/f4p-backup.log 2>&1; check $? "f4p: 基线备份成功"
+BK=$(ls -d $INST/backups/ish-backup-* | tail -1)
+B=$(fp $INST)
+# 篡改 manifest：加入一个“未来的迁移”。ps 层 ish_verify_backup 不检查 schema 会放行，随后已停止应用、由 Django 预检查拒绝。
+python3 - "$BK" <<'PY'
+import hashlib, json, pathlib, sys
+bk = pathlib.Path(sys.argv[1]); mp = bk / "manifest.json"
+man = json.loads(mp.read_text(encoding="utf-8"))
+man.setdefault("migrations", []).append("quotations.9999_future")
+mp.write_text(json.dumps(man, ensure_ascii=False), encoding="utf-8")
+h = hashlib.sha256(mp.read_bytes()).hexdigest()
+sums = bk / "SHA256SUMS"
+lines = [l for l in sums.read_text().splitlines() if not l.endswith("  manifest.json")] + [f"{h}  manifest.json"]
+sums.write_text("\n".join(lines) + "\n")
+PY
+check $? "f4p: 篡改备份 manifest（加入未来迁移）"
+ps_run $INST/scripts/restore.ps1 -BackupPath $BK -Production -Yes > $EV/f4p-restore.log 2>&1; rc=$?
+check $([[ $rc == 40 ]]; echo $?) "f4p: 前置拒绝 → 退出码 40（安全重启，非 42 保持停止）rc=$rc"
+check $([[ -n "$(health)" ]]; echo $?) "f4p: 前置拒绝后应用已安全重新启动（healthz 可用）"
+check $([[ "$(fp $INST)" == "$B" ]]; echo $?) "f4p: 前置拒绝后正式数据未改动"
+J=$(ls -t $INST/data/ops/restore-*.json | head -1)
+ST=$(python3 -c "import json;print(json.load(open('$J'))['state'])")
+check $([[ $ST == FAILED_PRECHECK ]]; echo $?) "f4p: 恢复日志终态 FAILED_PRECHECK（不是 RUNNING）state=$ST"
+check $([[ ! -f $INST/data/MAINTENANCE ]]; echo $?) "f4p: 未遗留维护标记（未手工删除，程序自管）"
+LEFT=$(PGPASSWORD=$PGPASS_SAVE psql -h 127.0.0.1 -U ish -d postgres -tAc "SELECT count(*) FROM pg_database WHERE datname LIKE 'ishsim_rst_%'")
+check $([[ $LEFT == 0 ]]; echo $?) "f4p: 未遗留 staging 库（left=$LEFT）"
+fi
+
 bash $(dirname "$0")/simhook.sh stop IndustrialSalesHub-App $INST >/dev/null 2>&1
 note "== 模拟验收：$pass PASS / $fail FAIL"
 [[ $fail == 0 ]]

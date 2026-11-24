@@ -56,15 +56,24 @@ try {
     $new = @(Get-ChildItem -LiteralPath $OpsDir -Filter 'restore-*.json' -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Name } | Sort-Object Name | Select-Object -Last 1)
     $rid = if ($new.Count) { (Get-Content -LiteralPath $new[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json).id } else { '' }
     if ($rc -ne 0) {
-        # P1 修复：只有日志明确为 ROLLED_BACK（或尚未开始切换）时才启动应用；否则保持停止与维护状态
+        # F-4 修复：由 Get-RestoreRecoveryDecision 统一判定“可否安全恢复应用服务”。
+        # 前置拒绝（FAILED_PRECHECK，数据未改动）与已安全回退（ROLLED_BACK，数据回到恢复前）→ 安全，恢复应用服务；
+        # 正在恢复（RUNNING）/回退失败（ROLLBACK_FAILED）/状态不确定 → 继续保持停止与保护。
+        # 绝不无条件自动启动，也不手工删除 MAINTENANCE 标记（维护标记只能由同一 token 的恢复进程自行解除）。
         $state = ''
         if ($new.Count) { $state = (Get-Content -LiteralPath $new[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json).state }
-        if (-not $new.Count -or $state -eq 'ROLLED_BACK') {
-            Write-Warn2 "恢复未执行或已自动回退（退出码 $rc）。正式数据保持恢复前状态。"
+        $decision = Get-RestoreRecoveryDecision -State $state -HasJournal ([bool]$new.Count)
+        if ($decision -eq 'RESTART') {
+            $why = switch ($state) {
+                'FAILED_PRECHECK' { '预检查被拒绝，正式数据未改动' }
+                'ROLLED_BACK' { '已自动回退到恢复前状态' }
+                default { '恢复未执行（无恢复日志）' }
+            }
+            Write-Warn2 "恢复未成功（$why；退出码 $rc，恢复 ID $rid）：正式数据保持恢复前状态，已恢复应用服务。原因见上方日志。"
             Start-IshService $SvcApp
             $exitCode = 40
         } else {
-            Write-Warn2 "恢复失败且自动回退未完成（日志状态 $state，恢复 ID $rid）。应用保持停止；请勿改动 data 目录，按《备份恢复与升级手册》第 6 节处理：05-恢复备份.bat -Rollback $rid"
+            Write-Warn2 "恢复失败且状态不确定或自动回退未完成（日志状态 $state，恢复 ID $rid）。应用保持停止；请勿改动 data 目录，按《备份恢复与升级手册》第 6 节处理：05-恢复备份.bat -Rollback $rid"
             $exitCode = 42
         }
     } else {

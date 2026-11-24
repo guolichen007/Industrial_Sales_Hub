@@ -394,6 +394,19 @@ function Add-OpsStep([hashtable]$step) {
     Write-IshLog ("journal step " + ($step | ConvertTo-Json -Compress))
 }
 
+# ---- F-4：恢复失败后的可用性判定（纯函数，便于单元测试）----
+# 依据恢复日志状态决定是否可安全恢复应用服务：
+#   RESTART = 正式数据可证明未改动（前置拒绝 FAILED_PRECHECK / 无日志）或已完整回退（ROLLED_BACK）→ 可安全启动应用；
+#   PROTECT = 状态不确定（RUNNING / 空）或回退失败（ROLLBACK_FAILED）或已 DONE 异常路径 → 保持停止与保护状态。
+function Get-RestoreRecoveryDecision([string]$State, [bool]$HasJournal) {
+    if (-not $HasJournal) { return 'RESTART' }   # 未生成日志：尚未开始任何切换，数据未改动
+    switch ($State) {
+        'FAILED_PRECHECK' { return 'RESTART' }    # 前置拒绝：正式数据未改动
+        'ROLLED_BACK' { return 'RESTART' }        # 已安全回退到恢复前
+        default { return 'PROTECT' }              # RUNNING / ROLLBACK_FAILED / 空 / 其它：不确定或回退失败
+    }
+}
+
 function New-OpsTempDir([string]$name) {
     # 恢复演练等需要临时存放私有文件的目录：位于安装根目录下 _ops-tmp（在 data 之外，满足“不得恢复到正式数据目录”），
     # 目录仅 SYSTEM/Administrators 可访问。返回的子目录本身不创建（演练命令要求目录不存在或为空）。

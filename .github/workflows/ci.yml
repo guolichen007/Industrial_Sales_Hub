@@ -126,6 +126,8 @@ jobs:
           if ($LASTEXITCODE) { exit 1 }
           powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windows/tests/unit-rc3-vc.ps1
           if ($LASTEXITCODE) { exit 1 }
+          powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windows/tests/unit-f4-recovery.ps1
+          if ($LASTEXITCODE) { exit 1 }
       - name: PSScriptAnalyzer
         shell: pwsh
         run: |

@@ -7,7 +7,9 @@
     python manage.py ish_restore --status                 # 列出恢复日志
 
 状态机（每一步写入 DATA_DIR/ops/restore-<ID>.json 与同名 .log，崩溃后可诊断/回退）：
-  VERIFY        校验备份（SHA256、清单、format）、schema 兼容（备份不得来自更新的程序）、磁盘空间
+  VERIFY        校验备份（SHA256、清单、format）、schema 兼容（备份不得来自更新的程序）、磁盘空间、正式库无其他连接
+  —— 预检查（VERIFY 及其后续只读校验、获取维护标记）任一项失败：状态记为 FAILED_PRECHECK（含错误摘要与完成时间），
+     正式库/私有文件/维护标记均未被改动，**不启动回退**；上层据此判定“数据未改动、可安全恢复应用服务”。
   LOCKED        获取全局运维锁 + 维护标记（token）
   SAFETY_BACKUP 当前状态的一致性备份（应用已停写），记录备份目录
   STAGE_DB      新建 staging 库并 pg_restore（单事务）；旧 schema 备份在 staging 上执行迁移到当前程序版本
@@ -16,7 +18,8 @@
   SWITCH        正式库改名为 <db>_old_<ID>，staging 改名为正式库；private 改名为 private.old-<ID>，staging 文件改名为 private
   POST_VERIFY   对切换后的正式库与文件再次完整性检查
   DONE          解除维护（仅自己的 token）；旧库/旧文件保留，待 --cleanup
-任何一步失败：按日志逆序撤销已完成的切换，删除 staging，解除自己的维护标记，状态 ROLLED_BACK，退出码非 0。
+任何一步失败：按日志逆序撤销已完成的切换，删除 staging，解除自己的维护标记，状态 ROLLED_BACK；若撤销本身失败则为 ROLLBACK_FAILED
+（保持保护状态、需人工介入）。SWITCH 之前从未修改正式数据，因此切换前/切换后失败都能安全回到 ROLLED_BACK。
 正式数据在 SWITCH 之前从未被修改；SWITCH 只使用数据库改名与目录改名（同一磁盘卷），不存在“半复制”的正式目录。
 """
 import json
@@ -154,23 +157,32 @@ class Command(BaseCommand):
         j.data.update(backup=str(bpath), prod_db=pgops.prod_db())
         j.phase("VERIFY")
         self._say(j, f"恢复 ID {rid}，备份 {bpath}")
-        man = verify_backup_dir(bpath)
-        if man["database"]["vendor"] != "postgresql":
-            raise CommandError("正式恢复仅支持 PostgreSQL 备份")
-        pgops.check_schema_compatible(man.get("migrations", []))
-        need = (bpath / "db.dump").stat().st_size * 4 + dir_size(bpath / "private") * 2 + 200 * 2**20
-        free = shutil.disk_usage(settings.DATA_DIR).free
-        if free < need:
-            raise CommandError(f"磁盘空间不足：需要约 {need // 2**20} MB（staging 库 + staging 文件 + 保留旧数据），剩余 {free // 2**20} MB")
-        prod = pgops.prod_db()
-        pgops.close_django()
-        if pgops.other_sessions(prod, self.pg_bin) > 0:
-            raise CommandError("正式数据库仍有其他连接：请先停止应用服务（05-恢复备份 会自动停止）")
-        token = current_token()
+        # ---- 预检查阶段：只读校验，绝不修改任何正式数据。任何失败都必须记为终态 FAILED_PRECHECK（不是 RUNNING），
+        #      且不启动回退阶段（因为还没切换任何东西）。这样上层 restore.ps1 才能判定“数据未改动、可安全恢复应用服务”。
         try:
-            _t, created = acquire_maintenance(f"restore {rid}", token)
-        except MaintenanceHeld as e:
-            raise CommandError(str(e))
+            man = verify_backup_dir(bpath)
+            if man["database"]["vendor"] != "postgresql":
+                raise CommandError("正式恢复仅支持 PostgreSQL 备份")
+            pgops.check_schema_compatible(man.get("migrations", []))
+            need = (bpath / "db.dump").stat().st_size * 4 + dir_size(bpath / "private") * 2 + 200 * 2**20
+            free = shutil.disk_usage(settings.DATA_DIR).free
+            if free < need:
+                raise CommandError(f"磁盘空间不足：需要约 {need // 2**20} MB（staging 库 + staging 文件 + 保留旧数据），剩余 {free // 2**20} MB")
+            prod = pgops.prod_db()
+            pgops.close_django()
+            if pgops.other_sessions(prod, self.pg_bin) > 0:
+                raise CommandError("正式数据库仍有其他连接：请先停止应用服务（05-恢复备份 会自动停止）")
+            token = current_token()
+            try:
+                _t, created = acquire_maintenance(f"restore {rid}", token)
+            except MaintenanceHeld as e:
+                raise CommandError(str(e))
+        except BaseException as e:  # noqa: BLE001 —— 预检查任何失败都记账为 FAILED_PRECHECK，不改动正式数据、不启动回退
+            if isinstance(e, CommandError):
+                self._precheck_failed(j, e)
+                raise
+            self._precheck_failed(j, e)
+            raise CommandError(f"恢复预检查失败（正式数据未改动）：{e}")
         j.phase("LOCKED", token_owner=created)
         try:
             self._run(j, bpath, man, prod, skip_safety_backup)
@@ -381,6 +393,15 @@ class Command(BaseCommand):
 
     def _say(self, j, msg):
         self.stdout.write(j.say(msg))
+
+    def _precheck_failed(self, j, exc):
+        """预检查失败：记为终态 FAILED_PRECHECK（含错误摘要与完成时间），不伪称 DONE、不启动回退。
+        此时正式库、私有文件、维护互斥等均未被改动，上层可据此安全恢复应用服务。"""
+        j.data["error"] = f"{type(exc).__name__}: {exc}"[:800]
+        j.data["state"] = "FAILED_PRECHECK"
+        j.data["finished_at"] = datetime.now().isoformat(timespec="seconds")
+        j.save()
+        self._say(j, f"预检查失败（正式数据未改动，未进入回退）：{j.data['error']}")
 
 
 class _Capture:

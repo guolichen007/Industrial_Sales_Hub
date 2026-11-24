@@ -2,6 +2,29 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [未发布] - 2026-11-24（RC3 Ubuntu 独立复核 · 定向整改 F-1/F-3/F-4，仍 NO-GO）
+
+依据《ISH_RC3_75073de_Ubuntu复核审查与定向整改任务书》（基线 `75073de`）。仅定向整改，不新增功能。
+
+### F-1 报价金额单行适配（版式变更 → 模板 `2026.11-r4`）
+- `apps/quotations/pdf.py` 合计区与 A/B/C 明细单价/总价列改为“确定性单行适配”：按实际嵌入字体、字号线性测量所需宽度，先按可计算动态列宽从描述列借宽（正常金额列宽/字号与 r3 完全一致，版式不退化），再在 `[6pt, 基准字号]` 缩放字号；仍放不下则 `AmountTooWide` 明确拒绝正式生成，绝不输出折行/裁切 PDF。金额 Decimal 算法未改动。
+- `TEMPLATE_VERSION` 升至 `2026.11-r4`：旧 `2026.11-r3` 签收不再授权新模板，须负责人按新版重签；历史冻结 PDF 仍返回存档原字节（`read_revision_pdf` 不重渲染），字节与 SHA256 不变。
+- 新增 `backend/tests/test_rc3_review_f1_amount_wrap.py`：A/B/C × 含税/未税 × 正常/十亿/百亿 × 单套/多台 × 45 行长单，断言金额单行完整、十进制一致、旧版本签收失效、渲染层对不可排版金额拒绝。
+
+### F-3 模拟钩子执行位（测试工程）
+- `git update-index --chmod=+x deploy/windows/tests/sim/simhook.sh`，Git 模式由 `100644` 改为 `100755`；`common.ps1` 通过 `& $env:ISH_SIM_HOOK` 直接调用它，全新克隆无需手工 `chmod` 即可运行升级/恢复模拟。
+- 新增静态门禁 `backend/tests/test_rc3_review_f3_exec_bit.py`（`git ls-files --stage` 必须是 `100755`），防执行位再次丢失。
+
+### F-4 恢复状态与应用可用性（P1）
+- `ish_restore.py`：VERIFY 只读预检查（备份校验/版本兼容/磁盘/正式库其他连接/维护标记）任一失败记为终态 `FAILED_PRECHECK`（含错误摘要与完成时间，不伪称 DONE、不启动回退、不改动正式数据）；此前会遗留 `RUNNING`。
+- `restore.ps1` + `common.ps1`：新增纯函数 `Get-RestoreRecoveryDecision`——仅 `FAILED_PRECHECK`/`ROLLED_BACK`/无日志时安全重启应用（退出码 40），`RUNNING`/`ROLLBACK_FAILED` 一律保持停止与保护（退出码 42）；不无条件自动启动、不手工删除 `MAINTENANCE`、不削弱运维互斥与回滚保护。
+- 新增 `backend/tests/test_rc3_review_f4_restore_state.py`（前置拒绝→FAILED_PRECHECK、切换前/后失败→ROLLED_BACK、回退失败→ROLLBACK_FAILED + 数据/维护/staging 不变断言）、`deploy/windows/tests/unit-f4-recovery.ps1`（状态映射单元），并在模拟验收新增 `f4precheck` 场景（真实 pwsh 包装层：前置拒绝→退出码 40、healthz 恢复、数据不变）。
+
+### 文档
+- 《备份恢复与升级手册》：补充 `FAILED_PRECHECK` 及恢复状态/退出码/处置对照表。
+- 《三公司报价模板-字段映射与签收》：新增十亿/百亿极端金额签收样张、单价两位小数录入规则、r4 需重新签收说明。
+- 《RC3-业务角色与字段矩阵》：F-2 公开说明填写金额的风险说明（不加强制过滤，由培训与甲方决定）。
+
 ## [2.1.0-rc3] - 2026-11-22（两板块与现场验收候选，非正式版）
 
 依据《RC2 两板块需求独立审计报告》F01–F15 与《RC3 两板块开发任务书》G0–G6。
