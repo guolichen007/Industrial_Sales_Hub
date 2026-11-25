@@ -11,14 +11,16 @@ python manage.py ish_verify_backup <备份目录> --restore-to-db <临时库名>
 正式恢复（覆盖生产）不在此命令中实现：必须由运维脚本 05-恢复备份 在停止服务、二次确认、先做一次当前状态备份后执行。
 """
 import json
-import os
 import re
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import quote
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
+
+from apps.common.ops_python import run_ops_manage
 
 from .ish_backup import pg_env, pg_tool, sha256_file
 
@@ -110,6 +112,7 @@ class Command(BaseCommand):
         r = subprocess.run([psql, "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c", f'CREATE DATABASE "{restore_to_db}"'], env=env, capture_output=True, text=True)
         if r.returncode != 0:
             raise CommandError(f"创建临时库失败：{r.stderr.strip()[:300]}")
+        verified = False
         try:
             r = subprocess.run([pg_tool("pg_restore", pg_bin), "--no-owner", "--no-privileges", "--exit-on-error", "-d", restore_to_db, str(p / "db.dump")], env=env, capture_output=True, text=True)
             if r.returncode != 0:
@@ -121,16 +124,32 @@ class Command(BaseCommand):
                 (rdir / "private").mkdir()
             # 在子进程中用临时库与临时目录运行完整性检查（不影响本进程的正式连接）
             db = settings.DATABASES["default"]
-            sub_env = os.environ.copy()
-            pw = f":{db['PASSWORD']}" if db.get("PASSWORD") else ""
-            sub_env.update({"DATABASE_URL": f"postgres://{db['USER']}{pw}@{db['HOST']}:{db['PORT']}/{restore_to_db}", "DATA_DIR": str(rdir), "ISH_LOG_DIR": str(rdir / "logs")})
-            r = subprocess.run([os.sys.executable, str(Path(settings.BASE_DIR) / "manage.py"), "verify_integrity", "--expect-manifest", str(p / "manifest.json")],
-                               env=sub_env, capture_output=True, text=True, cwd=str(settings.BASE_DIR))
-            self.stdout.write(r.stdout)
+            pw = f":{quote(db['PASSWORD'], safe='')}" if db.get("PASSWORD") else ""
+            sub_env = {"DATABASE_URL": f"postgres://{quote(db['USER'], safe='')}{pw}@{db['HOST']}:{db['PORT']}/{restore_to_db}",
+                       "DATA_DIR": str(rdir), "ISH_LOG_DIR": str(rdir / "logs")}
+            r = run_ops_manage(["verify_integrity", "--expect-manifest", str(p / "manifest.json")], sub_env)
             if r.returncode != 0:
-                raise CommandError("恢复后完整性检查失败：\n" + (r.stderr or r.stdout)[-1500:])
-            self.stdout.write(self.style.SUCCESS(f"恢复演练通过：临时库 {restore_to_db}，临时目录 {rdir}"))
+                raise CommandError(f"恢复后完整性检查失败：子进程退出码 {r.returncode}\n" + (r.stderr or r.stdout)[-1500:])
+            self.stdout.write(r.stdout)
+            verified = True
         finally:
-            if not keep:
-                subprocess.run([psql, "-d", "postgres", "-c", f'DROP DATABASE IF EXISTS "{restore_to_db}"'], env=env, capture_output=True, text=True)
-                shutil.rmtree(rdir, ignore_errors=True)
+            if not (keep and verified):
+                failures = []
+                try:
+                    drop = subprocess.run([psql, "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c", f'DROP DATABASE IF EXISTS "{restore_to_db}"'],
+                                          env=env, capture_output=True)
+                    if drop.returncode != 0:
+                        failures.append(f"临时库 {restore_to_db} 清理失败（退出码 {drop.returncode}）")
+                except OSError:
+                    failures.append(f"无法启动临时库 {restore_to_db} 的清理命令")
+                if rdir.exists():
+                    try:
+                        shutil.rmtree(rdir)
+                    except OSError as error:
+                        failures.append(f"临时目录 {rdir} 清理失败（错误码 {error.errno}）")
+                if failures:
+                    detail = "；".join(failures)
+                    if verified:
+                        raise CommandError(detail)
+                    self.stderr.write(detail)
+        self.stdout.write(self.style.SUCCESS(f"恢复演练通过：临时库 {restore_to_db}，临时目录 {rdir}"))

@@ -26,7 +26,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -37,6 +36,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from apps.common import pgops
 from apps.common.faults import fault
+from apps.common.ops_python import run_ops_manage
 
 PHASES = ["VERIFY", "LOCKED", "SAFETY_BACKUP", "STAGE_DB", "STAGE_FILES", "STAGE_VERIFY", "SWITCH", "POST_VERIFY", "DONE"]
 
@@ -89,14 +89,10 @@ def dir_size(p: Path):
     return sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) if p.exists() else 0
 
 
-def run_manage(args, extra_env, cwd=None):
-    """在子进程中运行 manage.py：数据库与数据目录总是显式传入（不依赖父进程环境变量的默认值）。"""
-    from apps.common.opslock import child_env
-
-    env = child_env({"DATA_DIR": str(settings.DATA_DIR), **extra_env})
-    r = subprocess.run([sys.executable, "-X", "utf8", str(Path(settings.BASE_DIR) / "manage.py"), *args], env=env, capture_output=True, text=True, cwd=str(cwd or settings.BASE_DIR))
-    return r.returncode, (r.stdout or "") + (r.stderr or "")
-
+def run_manage(args, extra_env):
+    """运行子进程并显式传入数据目录与数据库配置。"""
+    r = run_ops_manage(args, {"DATA_DIR": str(settings.DATA_DIR), **extra_env})
+    return r.returncode, r.stdout + r.stderr
 
 def db_url_for(name):
     from urllib.parse import quote
