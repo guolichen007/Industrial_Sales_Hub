@@ -17,7 +17,7 @@ function Assert-InstallAcl([string]$path, [string[]]$allowed, [long]$mask, [swit
 function Assert-InstallTree {
     $admin = @('S-1-5-18', 'S-1-5-32-544')
     $systemOwners = $admin + 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464' # TrustedInstaller
-    $writeMask = 0x500D0156 # GENERIC_ALL/WRITE、删除、改 ACL/所有者、目录新增/改写
+    $writeMask = $script:AclMutationMask
     # 父目录的 DELETE_CHILD 也可绕过子目录的删除权限。卷根目录自身无法被重命名或删除。
     $parent = [IO.Directory]::GetParent($Root)
     while ($parent) {

@@ -86,6 +86,7 @@ try {
     $rejected = $false
     try { Assert-InstallTree } catch { $rejected = $_.Exception.Message.Contains($Config) }
     if (-not $rejected) { throw 'Unsafe ACL was not rejected' }
+    if (@(Test-SensitiveAcl | Where-Object { $_.StartsWith("$Config ") }).Count -ne 1) { throw 'Sensitive ACL check missed unauthorized config read' }
 } finally { $acl.RemoveAccessRuleSpecific($unsafe); Set-Acl -LiteralPath $Config -AclObject $acl }
 Write-Host 'PASS unsafe ACL rejected before secret generation'
 
@@ -178,6 +179,27 @@ try {
     Install-Svc $SvcDb $dbXml
     Write-Host 'PASS repeat registration and stopped partial service repair'
     Set-IshAcls
+    $issues = @(Test-SensitiveAcl)
+    if ($issues.Count) { throw ('Installed read/execute/synchronize ACL was rejected: ' + ($issues -join '; ')) }
+    Write-Host 'PASS real Set-IshAcls followed by Test-SensitiveAcl accepts read/execute/synchronize'
+    $scriptDir = Join-Path $Root 'scripts'
+    $safeAcl = Get-Acl -LiteralPath $scriptDir
+    foreach ($right in 'WriteData','AppendData','WriteAttributes','WriteExtendedAttributes','Delete','DeleteSubdirectoriesAndFiles','ChangePermissions','TakeOwnership') {
+        $unsafeAcl = Get-Acl -LiteralPath $scriptDir
+        $unsafeAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+            (Get-Sid 'S-1-5-11'), [Security.AccessControl.FileSystemRights]$right, 'Allow'))
+        try {
+            Set-Acl -LiteralPath $scriptDir -AclObject $unsafeAcl
+            $issues = @(Test-SensitiveAcl)
+            if ($issues.Count -ne 1 -or -not $issues[0].StartsWith("$scriptDir ")) { throw "Sensitive ACL check missed $right" }
+            $rejected = $false
+            try { Assert-InstallTree } catch { $rejected = $_.Exception.Message.Contains($scriptDir) }
+            if (-not $rejected) { throw "Install tree check missed $right" }
+            Write-Host "PASS both ACL checks reject $right"
+        } finally { Set-Acl -LiteralPath $scriptDir -AclObject $safeAcl }
+    }
+    if (($script:AclMutationMask -band 0x50000000) -ne 0x50000000) { throw 'Missing GENERIC_WRITE or GENERIC_ALL mask bits' }
+    if (@(Test-SensitiveAcl).Count) { throw 'Fixture ACL was not restored' }
     Assert-InstallTree
     Start-IshService $SvcDb 20
     Start-IshService $SvcApp 20

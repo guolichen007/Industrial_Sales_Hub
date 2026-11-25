@@ -3,6 +3,13 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      windows_package_url:
+        description: HTTPS URL of the separately verified Windows installer ZIP for this commit
+        type: string
+      windows_package_sha256:
+        description: SHA256 of that Windows installer ZIP
+        type: string
 
 permissions:
   contents: read
@@ -142,6 +149,24 @@ jobs:
           Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe' -OutFile $winsw
           powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windows/tests/unit-install-native.ps1 -PgSource (Join-Path $out 'pgsql') -WinSw $winsw
           if ($LASTEXITCODE) { exit 1 }
+      - name: official Windows install and repeat from verified package
+        if: inputs.windows_package_url != '' || inputs.windows_package_sha256 != ''
+        shell: powershell
+        env:
+          ISH_QA_PACKAGE_URL: ${{ inputs.windows_package_url }}
+          ISH_QA_PACKAGE_SHA256: ${{ inputs.windows_package_sha256 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $uri = [uri]$env:ISH_QA_PACKAGE_URL
+          if (-not $uri.IsAbsoluteUri -or $uri.Scheme -ne 'https' -or $env:ISH_QA_PACKAGE_SHA256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Both HTTPS installer URL and pinned SHA256 are required' }
+          $zip = Join-Path $env:RUNNER_TEMP 'ish-verified-package.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri $uri -OutFile $zip
+          powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windows/tests/smoke-install-package.ps1 -Zip $zip -ZipSha256 $env:ISH_QA_PACKAGE_SHA256 -SourceSha $env:GITHUB_SHA -Evidence (Join-Path $env:RUNNER_TEMP 'ish-install-smoke')
+          if ($LASTEXITCODE) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        if: always() && (inputs.windows_package_url != '' || inputs.windows_package_sha256 != '')
+        with: { name: windows-install-smoke, path: "${{ runner.temp }}/ish-install-smoke" }
       - name: PSScriptAnalyzer
         shell: pwsh
         run: |

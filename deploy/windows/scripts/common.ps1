@@ -3,6 +3,9 @@
 Set-StrictMode -Version 3
 $ErrorActionPreference = 'Stop'
 
+# GENERIC_WRITE/ALL, write/append data and attributes, DELETE_CHILD, DELETE, WRITE_DAC/OWNER.
+$script:AclMutationMask = 0x500D0156
+
 $script:SvcDb = 'IndustrialSalesHub-DB'
 $script:SvcApp = 'IndustrialSalesHub-App'
 $script:BackupTask = 'IndustrialSalesHub-DailyBackup'
@@ -477,7 +480,6 @@ function Test-SensitiveAcl {
     # 不得对安装根目录、scripts、runtime、app 有写入/修改权限（SYSTEM 计划任务执行这些脚本）
     $problems = @()
     $lowSids = @('S-1-5-32-545', 'S-1-5-11', 'S-1-1-0')
-    $write = [System.Security.AccessControl.FileSystemRights]'Write, Modify, FullControl, CreateFiles, AppendData, Delete, ChangePermissions, TakeOwnership'
     foreach ($d in @($script:Config, $script:Data, $script:Logs, $script:Backups, (Join-Path $script:Config 'admin-only'))) {
         if (-not (Test-Path -LiteralPath $d)) { continue }
         foreach ($r in (Get-Acl -LiteralPath $d).Access) {
@@ -489,7 +491,7 @@ function Test-SensitiveAcl {
         if (-not (Test-Path -LiteralPath $d)) { continue }
         foreach ($r in (Get-Acl -LiteralPath $d).Access) {
             try { $sid = $r.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { $sid = "$($r.IdentityReference)" }
-            if ($r.AccessControlType -eq 'Allow' -and $lowSids -contains $sid -and ($r.FileSystemRights -band $write)) { $problems += "$d 允许 $($r.IdentityReference) 写入（$($r.FileSystemRights)）" }
+            if ($r.AccessControlType -eq 'Allow' -and $lowSids -contains $sid -and ([long]$r.FileSystemRights -band $script:AclMutationMask)) { $problems += "$d 允许 $($r.IdentityReference) 写入（$($r.FileSystemRights)）" }
         }
     }
     return $problems
