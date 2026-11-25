@@ -204,6 +204,9 @@ try {
     if ($LASTEXITCODE -ne 0 -or $one -ne '1') { throw 'PostgreSQL SCRAM accepted-password assertion failed' }
     $listen = & $psql -X -w -h 127.0.0.1 -p $port -U postgres -d postgres -Atc 'show listen_addresses' 2>$null
     if ($LASTEXITCODE -ne 0 -or $listen -ne '127.0.0.1') { throw 'PostgreSQL is not restricted to loopback' }
+    $limits = & $psql -X -w -h 127.0.0.1 -p $port -U postgres -d postgres -Atc "SELECT current_setting('max_connections'), current_setting('shared_buffers')" 2>$null
+    if ($LASTEXITCODE -ne 0 -or $limits -ne '60|256MB') { throw 'PostgreSQL connection or buffer settings differ from the frozen baseline' }
+    Write-Host "PASS running PostgreSQL max_connections and shared_buffers: $limits"
     $rolePassword = [guid]::NewGuid().ToString('N')
     if ((Invoke-InstallRoleSql $psql $port $rolePassword) -ne 0) { throw 'Installer stdin role creation failed' }
     $env:PGPASSWORD = $rolePassword

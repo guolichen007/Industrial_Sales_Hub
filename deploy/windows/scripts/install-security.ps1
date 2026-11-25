@@ -148,6 +148,8 @@ function Initialize-InstallDatabase([int]$port) {
     @(
         "listen_addresses = '127.0.0.1'"
         "port = $port"
+        'max_connections = 60'
+        "shared_buffers = '256MB'"
         "password_encryption = 'scram-sha-256'"
         "logging_collector = on"
         "log_directory = 'log'"
