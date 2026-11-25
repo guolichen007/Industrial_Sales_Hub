@@ -130,6 +130,18 @@ jobs:
           if ($LASTEXITCODE) { exit 1 }
           powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windows/tests/unit-f4-restore-wrapper.ps1
           if ($LASTEXITCODE) { exit 1 }
+      - name: native Windows PostgreSQL 16.16 and installer ACL
+        shell: powershell
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'postgresql-16.16-win-x64.zip'
+          $out = Join-Path $env:RUNNER_TEMP 'ish-pg16-native'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.enterprisedb.com/postgresql/postgresql-16.16-1-windows-x64-binaries.zip' -OutFile $zip
+          if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -ne '5c0d06f3d26a929ecb36dd931409f1e51a4181355794a259b90aae8bffc57a9f') { throw 'PostgreSQL archive digest mismatch' }
+          Expand-Archive -LiteralPath $zip -DestinationPath $out
+          $winsw = Join-Path $out 'WinSW-x64.exe'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe' -OutFile $winsw
+          powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windows/tests/unit-install-native.ps1 -PgSource (Join-Path $out 'pgsql') -WinSw $winsw
+          if ($LASTEXITCODE) { exit 1 }
       - name: PSScriptAnalyzer
         shell: pwsh
         run: |

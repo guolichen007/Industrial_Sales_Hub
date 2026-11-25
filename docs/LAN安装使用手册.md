@@ -22,19 +22,44 @@
 | 网络 | 主机建议在路由器中做 **DHCP 保留**（固定 IP），或使用内网 DNS 名称 |
 | 前置软件 | **无**。安装包已包含 Python 运行时、PostgreSQL 16、Visual C++ 运行库（微软签名，安装时自动安装） |
 
-安装目录要求：放在本地磁盘的**纯英文路径**（例如 `D:\IndustrialSalesHub`，可以含空格）。PostgreSQL 按系统代码页处理路径，中文路径可能导致数据库无法启动，安装程序会拒绝。
+安装目录要求：放在本地 NTFS 磁盘的**纯英文路径**（例如 `C:\Program Files\ISH-Deploy` 下，可以含空格）。安装包应先复制和校验，再解压到普通用户无法修改文件或替换目录的位置。PostgreSQL 按系统代码页处理路径，安装程序会拒绝中文路径。
 路径中不得含 `& < > " ' % ! ^ ; ` $`（会破坏服务配置与批处理参数，安装程序拒绝，退出码 14）。**不要放在 OneDrive/百度网盘/坚果云等同步盘、桌面或网络共享（UNC）路径**。
 同一台主机只能有一套安装：若已存在同名服务但属于另一个目录，安装程序拒绝（退出码 18），请在原目录卸载或修复。
 
 ## 3. 安装步骤
 
-1. 核对安装包：`Industrial_Sales_Hub_<版本>_LAN_Windows_x64.zip` 与同名 `.sha256` 文件中的哈希一致（PowerShell：`Get-FileHash <zip> -Algorithm SHA256`）。
-2. 右键 ZIP → 属性 → 勾选“解除锁定”（如有）→ 确定；然后解压到 `D:\IndustrialSalesHub`。
-3. 打开解压目录，**右键 `01-安装部署.bat` → 以管理员身份运行**。安装程序会：
+1. 从交付方取得对应版本 ZIP 与已核验的 SHA256。
+2. 在 **64 位管理员 Windows PowerShell** 中编辑前两行后执行下列命令。示例在 Program Files 下新建一个仅 Administrators 和 SYSTEM 可访问的目录，把 ZIP 复制到该目录后校验并解压。若目录已存在，请先确认用途。首次安装可选用新的英文目录名，修复或续装请使用原已校验目录并跳到第 3 步。
+
+   ```powershell
+   $zip = 'C:\path\to\Industrial_Sales_Hub_2.1.0-rc3_LAN_Windows_x64.zip'
+   $expected = '<交付方提供的 64 位十六进制 SHA256>'
+   $ErrorActionPreference = 'Stop'
+   $stage = Join-Path $env:ProgramFiles 'ISH-Deploy'
+   if (Test-Path -LiteralPath $stage) { throw "目录已存在：$stage" }
+   $acl = [Security.AccessControl.DirectorySecurity]::new()
+   $acl.SetAccessRuleProtection($true, $false)
+   $acl.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))
+   foreach ($sid in 'S-1-5-18', 'S-1-5-32-544') {
+       $id = [Security.Principal.SecurityIdentifier]::new($sid)
+       $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+           $id, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))
+   }
+   [IO.Directory]::CreateDirectory($stage, $acl) | Out-Null
+   $verifiedZip = Join-Path $stage 'package.zip'
+   Copy-Item -LiteralPath $zip -Destination $verifiedZip
+   if ((Get-FileHash -LiteralPath $verifiedZip -Algorithm SHA256).Hash -ne $expected) {
+       throw '安装包 SHA256 不匹配'
+   }
+   Expand-Archive -LiteralPath $verifiedZip -DestinationPath $stage
+   ```
+
+3. 在同一管理员窗口进入解压生成的 `Industrial_Sales_Hub_<版本>_LAN_Windows_x64` 子目录，运行 `& '.\01-安装部署.bat'`。安装程序会：
    - 检查系统版本、64 位、磁盘、内存、端口、是否同步盘；校验安装包所有文件的 SHA256；
+   - 在生成配置和凭据之前保护配置、数据、日志和备份目录，检查普通用户无法替换提权执行所需的目录与文件。发现不安全的权限时停止，退出码为 27；
    - 安装 VC++ 运行库（**返回 3010 = 需要重启**：安装程序记录“等待重启”状态并以退出码 3010 结束；请重启 Windows 后**再次运行** `01-安装部署.bat`，
      会从中断处继续；未重启就重跑会再次提示重启，不会误报数据库损坏）；生成随机签名密钥与数据库密码（`config\app.env`）；
-   - 初始化 PostgreSQL（只监听 127.0.0.1，独立应用账号 `ish_app`，非超级用户）；
+   - 使用一次性 SYSTEM 任务初始化 PostgreSQL，临时密码文件仅 Administrators 和 SYSTEM 可访问。完成后清理临时密码文件及任务。数据库只监听 127.0.0.1，应用账号 `ish_app` 为非超级用户；
    - 注册两个 Windows 服务（开机自启、故障自动重启、以虚拟服务账户运行）；
    - 设置目录权限（`config`、`data`、`backups` 仅管理员与服务账户可访问）；
    - 数据库迁移；**只创建缺失的**三家出具主体占位记录（create-only：重复安装不修改已有主体、条款、价税口径、Logo、签收）；不导入任何客户、项目或演示账号；
@@ -49,7 +74,7 @@
    `01-安装部署.bat -AppPort 8010 -DbPort 55433 -AllowedRemote 192.168.1.0/24 -PreferredIp 192.168.1.20`
    （`-PreferredIp`：多网卡主机指定写入快捷方式/访问地址的 IP；也可在 `config\app.env` 设置 `ISH_PREFERRED_IP`，`06-检查系统` 与 `02-启动系统` 同样采用）
 5. 安装失败或中断时：窗口会显示原因与退出码，详细日志在 `logs\install-*.log`，进度记录在 `data\install-state.json`。修正后**直接重新运行**即可
-   （不会重复创建服务、不会重新生成密钥、不会覆盖已有数据；若中断发生在数据库初始化期间，会自动把未完成的空数据库目录移到 `data\pgdata.incomplete-*` 后重新初始化）。
+   （沿用已生成的应用配置，不会重复创建服务或覆盖已有正式数据）。数据库初始化从独立的 `data\pgdata-init-*` 暂存目录开始，完成后才发布到 `data\pgdata`。如初始化中断，暂存目录留作排查，续装使用新的暂存目录。如果正式数据库目录存在却缺少必要文件或配套凭据，请保留现场并联系实施人员。
 
 ## 4. 首次使用
 

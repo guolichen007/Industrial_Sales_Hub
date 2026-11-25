@@ -217,6 +217,7 @@ function Grant-ServiceDirs {
     Protect-Directory $script:PgData @(, @($db, 'Modify'))
     Protect-Directory (Join-Path $script:Data 'private') @(, @($app, 'Modify'))
     Protect-Directory $script:Logs @(@($app, 'Modify'), @($db, 'Modify'))
+    if (Test-Path -LiteralPath $script:Services) { Protect-Directory $script:Services @(@($app, 'ReadAndExecute'), @($db, 'ReadAndExecute')) }
     Protect-Directory $script:Config @(, @($app, 'ReadAndExecute'))
     Protect-Directory (Join-Path $script:Config 'admin-only') @()
     Protect-Directory $script:Backups @()

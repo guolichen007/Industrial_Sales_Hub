@@ -10,7 +10,8 @@ param(
     [string]$PreferredIp = ''                 # 多网卡主机：指定员工访问用的局域网 IP（写入 config\app.env 的 ISH_PREFERRED_IP）
 )
 . (Join-Path $PSScriptRoot 'common.ps1')
-Start-Log 'install'
+. (Join-Path $PSScriptRoot 'install-security.ps1')
+$script:LogFile = $null
 $script:InstallState = $null
 function Set-InstallState([string]$phase) {
     # data\install-state.json：记录初始化进度，中断后重复运行据此安全续做（不记录任何密码）
@@ -45,6 +46,12 @@ if (-not (Test-AsciiPath $Root)) {
     # PostgreSQL 的 initdb/postgres 按系统 ANSI 代码页处理路径，中文路径在部分系统上会导致数据库无法启动
     Fail "安装路径包含中文或特殊字符：$Root`n请解压到纯英文路径（例如 D:\IndustrialSalesHub）。路径中可以包含空格。" 14
 }
+# 从已验证并保护的目录运行，尤其不能信任可由普通账户替换的脚本、运行时或父目录。
+try {
+    Assert-InstallTree
+    New-InstallPrivateDirectory $Logs
+} catch { Fail ("安装前权限校验失败：" + $_.Exception.Message) 27 }
+Start-Log 'install'
 $drive = (Get-Item -LiteralPath $Root).PSDrive
 $freeGb = [math]::Round($drive.Free / 1GB, 1)
 if ($freeGb -lt 5) { Fail "磁盘 $($drive.Name): 剩余 $freeGb GB，至少需要 5 GB（建议预留 50 GB）。" 15 }
@@ -64,8 +71,10 @@ foreach ($svc in @($SvcDb, $SvcApp)) {
         }
     }
 }
+New-InstallPrivateDirectory $Data
 $tok, $busy = Enter-OpsLock 'install' 0
 if (-not $tok) { Fail $busy 75 }
+try {
 $cur = Get-MaintenanceOwner
 if ($cur -and $cur.task -notlike 'install*') { Fail "系统处于维护状态（$($cur.task)），可能是升级/恢复失败后保持的只读状态。请先处理（见手册）再修复安装。" 19 }
 
@@ -76,8 +85,10 @@ if ($installed) {
     $DbPort = [int]$cfg['ISH_DB_PORT']
     Write-Ok "检测到已有安装（config\app.env）：沿用应用端口 $AppPort、数据库端口 $DbPort；不会重新生成密钥或覆盖数据"
 } else {
-    foreach ($p in @($AppPort, $DbPort)) { if (-not (Test-PortFree $p)) { Fail "端口 $p 已被占用。请关闭占用程序，或用参数指定其他端口：01-安装部署.bat -AppPort 8010 -DbPort 55433" 16 } }
-    Write-Ok "端口可用：应用 $AppPort，数据库 $DbPort（仅本机）"
+    if (Test-Path -LiteralPath $PgData) { Fail '存在未关联配置的数据库目录，请保留现场并联系实施人员。' 21 }
+}
+foreach ($listener in @(@($SvcApp, $AppPort), @($SvcDb, $DbPort))) {
+    if ((Get-ServiceState $listener[0]) -ne 'Running' -and -not (Test-PortFree $listener[1])) { Fail "端口 $($listener[1]) 已被占用，未改动占用程序。" 16 }
 }
 
 # ---------- 2. 运行库 ----------
@@ -110,7 +121,11 @@ if ($vcOk) { Write-Ok '已安装' } else {
 
 # ---------- 3. 目录与配置 ----------
 Write-Step '准备目录与配置'
-foreach ($d in @($Config, $Data, (Join-Path $Data 'private'), $Logs, $Backups, $Services)) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
+foreach ($d in @($Config, $Data, $AdminOnly, (Join-Path $Data 'private'), $Logs, $Backups, $Services)) {
+    New-InstallPrivateDirectory $d
+}
+$cfgTmp = "$AppEnv.install.tmp"
+if (Test-Path -LiteralPath $cfgTmp) { Remove-Item -LiteralPath $cfgTmp }
 if (-not $installed) {
     $dbPass = New-RandomSecret 24
     $lan = Get-LanAddresses
@@ -121,7 +136,7 @@ if (-not $installed) {
     else { $origins = ($hosts | Where-Object { $_ -ne 'localhost' } | ForEach-Object { "${scheme}://${_}:$AppPort" }) -join ',' }
     $listen = if ($Https) { "127.0.0.1:$AppPort" } else { "0.0.0.0:$AppPort" }
     $proxyLines = if ($Https) { @('ISH_TRUST_PROXY_HEADER=1', 'ISH_TRUSTED_PROXY=127.0.0.1') } else { @() }
-    $cfgTmp = "$AppEnv.$PID.tmp"
+    try {
     @(
         '# 工业销售管理系统 正式配置（自动生成）。包含数据库密码与签名密钥，仅管理员与服务账户可读。'
         'ISH_MODE=LAN'
@@ -142,7 +157,10 @@ if (-not $installed) {
         'ISH_BACKUP_KEEP_DAYS=30'
         'ISH_BACKUP_COPY_TO='
     ) + $proxyLines | Set-Content -LiteralPath $cfgTmp -Encoding UTF8
-    Move-Item -LiteralPath $cfgTmp -Destination $AppEnv -Force   # 原子生成：中断不会留下半个 app.env
+    Move-Item -LiteralPath $cfgTmp -Destination $AppEnv   # 原子生成：不替换现有配置
+    } finally {
+        if (Test-Path -LiteralPath $cfgTmp) { Remove-Item -LiteralPath $cfgTmp }
+    }
     Write-Ok '已生成 config\app.env（随机密钥与数据库密码）'
     if (-not $Https) { Write-Warn2 '当前为 HTTP 隔离内网试用模式：数据在局域网中未加密传输。正式使用建议配置可信 HTTPS 反向代理（见安装手册）。' }
 }
@@ -151,79 +169,16 @@ $cfg = Read-AppEnv
 # ---------- 4. 数据库 ----------
 Write-Step '初始化 PostgreSQL（仅监听 127.0.0.1）'
 $dbUrl = [Uri]($cfg['DATABASE_URL'] -replace '^postgres:', 'http:')
+if ($dbUrl.Host -ne '127.0.0.1' -or $dbUrl.Port -ne $DbPort -or $dbUrl.AbsolutePath -ne '/ish' -or $dbUrl.UserInfo -notlike 'ish_app:*') { Fail '数据库连接配置未指向当前实例的本机数据库。' 21 }
 $dbPass = [Uri]::UnescapeDataString($dbUrl.UserInfo.Split(':', 2)[1])
-$superFile = Join-Path $AdminOnly 'postgres-superuser.txt'
-$st = Get-InstallState
-if ((Test-Path -LiteralPath (Join-Path $PgData 'PG_VERSION')) -and ($st -in @('initdb', 'dbconfig')) -and -not (Test-Path -LiteralPath $superFile)) {
-    # 上次安装在 initdb 过程中中断，且超级用户密码未保存：此时尚未建库/迁移，不可能有业务数据，安全地移开重建
-    $aside = "$PgData.incomplete-" + (Get-Date -Format 'yyyyMMddHHmmss')
-    Move-Item -LiteralPath $PgData -Destination $aside
-    Write-Warn2 "检测到上次中断的数据库初始化，已移到 $aside 并重新初始化（该目录不含业务数据，确认后可删除）"
-}
-if ((Test-Path -LiteralPath (Join-Path $PgData 'PG_VERSION')) -and -not (Test-Path -LiteralPath $superFile)) {
-    Fail "数据库目录已存在但缺少 config\admin-only\postgres-superuser.txt（安装状态 $st）。为防止误删业务数据，安装中止；请联系实施人员。" 21
-}
-if (-not (Test-Path -LiteralPath (Join-Path $PgData 'PG_VERSION'))) {
-    Set-InstallState 'initdb'
-    New-Item -ItemType Directory -Force -Path $AdminOnly | Out-Null
-    Protect-Directory $AdminOnly @()
-    $super = New-RandomSecret 24
-    # 先把超级用户密码写入仅管理员可读的位置，再 initdb：任何时刻中断都不会丢失已设置的密码
-    Set-Content -LiteralPath $superFile -Value "postgres 超级用户密码（仅运维紧急使用，勿外传）：$super" -Encoding UTF8
-    $pwFile = Join-Path $AdminOnly ("initdb-pw-{0}.txt" -f [guid]::NewGuid())
-    try {
-        Set-Content -LiteralPath $pwFile -Value $super -Encoding ASCII -NoNewline
-        if (Test-Path -LiteralPath $PgData) { Remove-Item -LiteralPath $PgData -Recurse -Force }   # initdb 要求目录为空（此处必为未完成的空目录）
-        $rc = Invoke-Exe (Join-Path $PgBin 'initdb.exe') @('-D', $PgData, '-U', 'postgres', "--pwfile=$pwFile", '-E', 'UTF8', '--locale=C', '--auth-local=scram-sha-256', '--auth-host=scram-sha-256')
-        if ($rc -ne 0) { Fail 'initdb 失败（见日志）' 21 }
-    } finally { Remove-Item -LiteralPath $pwFile -Force -ErrorAction SilentlyContinue }
-    Set-InstallState 'dbconfig'
-
-    @(
-        "listen_addresses = '127.0.0.1'"
-        "port = $DbPort"
-        'max_connections = 60'
-        "shared_buffers = '256MB'"
-        "logging_collector = on"
-        "log_directory = 'log'"
-        "log_rotation_age = '7d'"
-        "lc_messages = 'C'"
-        "timezone = 'Asia/Shanghai'"
-    ) | Add-Content -LiteralPath (Join-Path $PgData 'postgresql.conf') -Encoding ASCII
-    @('# 仅本机 scram 认证', 'host all all 127.0.0.1/32 scram-sha-256', 'host all all ::1/128 scram-sha-256') | Set-Content -LiteralPath (Join-Path $PgData 'pg_hba.conf') -Encoding ASCII
-    Set-InstallState 'initdb-done'
-    Write-Ok '数据库目录已初始化'
-} else { Write-Ok '数据库目录已存在，跳过 initdb' }
+if (-not (Test-Path -LiteralPath $PgData)) { Set-InstallState 'initdb' }
+try { $initialized = Initialize-InstallDatabase $DbPort }
+catch { Fail ("数据库初始化检查失败：" + $_.Exception.Message) 21 }
+if ($initialized) { Set-InstallState 'initdb-done'; Write-Ok '数据库目录已初始化' }
+else { Write-Ok '数据库目录已存在，跳过 initdb' }
 
 # 服务账户与目录权限（低权限：虚拟服务账户 NT SERVICE\...）
 Write-Step '注册 Windows 服务（开机自启、故障自动重启）'
-$winsw = Join-Path $Runtime 'winsw\WinSW-x64.exe'
-function Install-Svc([string]$id, [string]$xml) {
-    $dir = Join-Path $Services $id
-    New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    $dst = Join-Path $dir "$id.exe"
-    # 服务运行中时 exe 被占用：哈希相同则不复制（重复安装/修复不失败）
-    if (-not (Test-Path -LiteralPath $dst) -or (Get-FileHash -LiteralPath $dst).Hash -ne (Get-FileHash -LiteralPath $winsw).Hash) {
-        if ((Get-ServiceState $id) -eq 'Running') { Stop-Service -Name $id }
-        Copy-Item -LiteralPath $winsw -Destination $dst -Force
-    }
-    Set-Content -LiteralPath (Join-Path $dir "$id.xml") -Value $xml -Encoding UTF8
-    if ((Get-ServiceState $id) -eq 'NotInstalled') {
-        $rc = Invoke-Exe (Join-Path $dir "$id.exe") @('install')
-        if ($rc -ne 0) { Fail "服务 $id 安装失败" 22 }
-        Write-Ok "已注册服务 $id"
-    } else {
-        # WinSW 2.x 在每次启动服务时读取同名 XML，已更新的配置将在下次启动时生效（不重复创建服务）
-        Write-Ok "服务 $id 已存在，已更新配置文件（不重复创建）"
-    }
-    # 以 Windows 虚拟服务账户（NT SERVICE\<服务名>，无密码、低权限）运行
-    # 不用 sc.exe：PowerShell 5.1 会丢弃空字符串参数（password= ""），改用 WMI Win32_Service.Change
-    $svc = Get-CimInstance Win32_Service -Filter "Name='$id'"
-    if ($svc.StartName -ne "NT SERVICE\$id") {
-        $r = Invoke-CimMethod -InputObject $svc -MethodName Change -Arguments @{ StartName = "NT SERVICE\$id"; StartPassword = '' }
-        if ($r.ReturnValue -ne 0) { Fail "无法将服务 $id 配置为虚拟服务账户（Win32_Service.Change 返回 $($r.ReturnValue)）" 22 }
-    }
-}
 $pgExe = Join-Path $PgBin 'pg_ctl.exe'
 function X([string]$v) { return [Security.SecurityElement]::Escape($v) }   # 服务 XML 中所有路径按 XML 转义
 $dbXml = @"
@@ -271,6 +226,8 @@ Install-Svc $SvcApp $appXml
 
 Write-Step '设置目录权限（根目录普通用户只读；数据/配置/备份仅管理员与服务账户）'
 Set-IshAcls
+$aclProblems = @(Test-SensitiveAcl)
+if ($aclProblems.Count) { Fail ("敏感目录权限不符合要求：`n  " + ($aclProblems -join "`n  ")) 27 }
 Write-Ok '权限已设置'
 
 Write-Step '启动数据库'
@@ -283,12 +240,13 @@ $superPw = ((Get-Content -LiteralPath (Join-Path $AdminOnly 'postgres-superuser.
 $env:PGPASSWORD = $superPw
 try {
     $psql = Join-Path $PgBin 'psql.exe'
-    $exists = & $psql -h 127.0.0.1 -p $DbPort -U postgres -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='ish_app'"
+    $exists = & $psql -w -h 127.0.0.1 -p $DbPort -U postgres -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='ish_app'"
+    if ($LASTEXITCODE -ne 0) { Fail '无法认证本机数据库管理连接' 24 }
     if ($exists -ne '1') {
-        & $psql -h 127.0.0.1 -p $DbPort -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE ish_app LOGIN PASSWORD '$dbPass' NOSUPERUSER NOCREATEROLE CREATEDB" | Out-Null
-        if ($LASTEXITCODE -ne 0) { Fail '创建数据库账号失败' 24 }
+        if ((Invoke-InstallRoleSql $psql $DbPort $dbPass) -ne 0) { Fail '创建数据库账号失败' 24 }
     }
-    $exists = & $psql -h 127.0.0.1 -p $DbPort -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='ish'"
+    $exists = & $psql -w -h 127.0.0.1 -p $DbPort -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='ish'"
+    if ($LASTEXITCODE -ne 0) { Fail '无法查询本机数据库状态' 24 }
     if ($exists -ne '1') {
         & $psql -h 127.0.0.1 -p $DbPort -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE ish OWNER ish_app ENCODING 'UTF8' TEMPLATE template0" | Out-Null
         if ($LASTEXITCODE -ne 0) { Fail '创建数据库失败' 24 }
@@ -342,7 +300,12 @@ Write-Step '生成客户端快捷方式'
 if ($PreferredIp) {
     if ($PreferredIp -notmatch '^\d{1,3}(\.\d{1,3}){3}$') { Fail "PreferredIp 格式错误：$PreferredIp" 14 }
     $lines = @(Get-Content -LiteralPath $AppEnv -Encoding UTF8 | Where-Object { $_ -notmatch '^ISH_PREFERRED_IP=' }) + "ISH_PREFERRED_IP=$PreferredIp"
-    $tmpEnv = "$AppEnv.$PID.tmp"; $lines | Set-Content -LiteralPath $tmpEnv -Encoding UTF8; Move-Item -LiteralPath $tmpEnv -Destination $AppEnv -Force
+    try {
+        $lines | Set-Content -LiteralPath $cfgTmp -Encoding UTF8
+        [IO.File]::Replace($cfgTmp, $AppEnv, [NullString]::Value)
+    } finally {
+        if (Test-Path -LiteralPath $cfgTmp) { Remove-Item -LiteralPath $cfgTmp }
+    }
     if ((Read-AppEnv)['DJANGO_ALLOWED_HOSTS'] -notmatch [regex]::Escape($PreferredIp)) { Write-Warn2 "$PreferredIp 不在 DJANGO_ALLOWED_HOSTS 中：请编辑 config\app.env 加入后重启应用服务" }
 }
 $lanAll = @(Get-LanCandidates | ForEach-Object { $_.IP })
@@ -363,7 +326,7 @@ $aclProblems = @(Test-SensitiveAcl)
 if ($aclProblems.Count) { Fail ("敏感目录权限不符合要求：`n  " + ($aclProblems -join "`n  ")) 27 }
 Write-Ok 'config、data、logs、backups 仅 SYSTEM/Administrators/服务账户可访问；安装根目录普通用户只读'
 Set-InstallState 'done'
-Exit-OpsLock
+} finally { Exit-OpsLock }
 Write-Host "`n安装完成。" -ForegroundColor Green
 Write-Host '局域网访问地址（以本机实际网卡为准）：' -ForegroundColor Green
 $urls | ForEach-Object { Write-Host "  $_" -ForegroundColor Green }
